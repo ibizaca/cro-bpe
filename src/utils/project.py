@@ -1,10 +1,12 @@
+import logging
+from collections.abc import Callable
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from shutil import rmtree
-from datetime import datetime
-import logging
+
 from pydantic import BaseModel, Field
-from collections.abc import Callable
+from pydantic.dataclasses import dataclass
 
 
 ### DIRECTORIES ###
@@ -96,44 +98,32 @@ def setup_logging(log_level: int = logging.INFO, log_to_file: bool = True) -> lo
     return root_logger
 
 
-def get_logger(name: str) -> logging.Logger:
-    """
-    Get a logger instance for a specific module.
+### FLOW CONTROL ###
 
-    Args:
-        name: The name of the logger (typically __name__ of the module)
-
-    Returns:
-        A configured logger instance
-    """
-    return logging.getLogger(name)
-
-
-### Flow Control ###
-
-class BaseFlowControl(BaseModel):
+class BaseWorkflowControl(BaseModel):
     run_step: bool = Field(default=True, description="Whether the flow step should be run or not")
     run_function: Callable = Field(description="The main function to execute for this flow step")
 
 
-class DownloadControl(BaseFlowControl):
+class DownloadConfig(BaseWorkflowControl):
     pass
 
 
-class PreprocessingControl(BaseFlowControl):
+class PreprocessingConfig(BaseWorkflowControl):
     pass
 
 
-class FeatureEngineeringControl(BaseFlowControl):
+class FeatureEngineeringConfig(BaseWorkflowControl):
     pass
 
 
-class ModelTrainingControl(BaseFlowControl):
+class ModelTrainingConfig(BaseWorkflowControl):
     pass
 
 
-class Controls:
-    DOWNLOAD = DownloadControl
-    PREPROCESSING = PreprocessingControl
-    FEATURE_ENGINEERING = FeatureEngineeringControl
-    MODEL_TRAINING = ModelTrainingControl
+@dataclass
+class WorkflowConfigs:
+    DOWNLOAD: BaseWorkflowControl = DownloadConfig
+    PREPROCESSING: BaseWorkflowControl = PreprocessingConfig
+    FEATURE_ENGINEERING: BaseWorkflowControl = FeatureEngineeringConfig
+    MODEL_TRAINING: BaseWorkflowControl = ModelTrainingConfig
