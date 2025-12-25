@@ -1,0 +1,46 @@
+[project]
+name = "cro-bpe"
+dynamic = ["version"]
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "datasets>=4.4.2",
+    "mlflow[extras]>=3.8.0",
+    "pydantic>=2.12.5",
+]
+
+[dependency-groups]
+dev = [
+    { include-group = "lint"},
+    { include-group = "test"},
+]
+lint = [
+    "black>=25.1.0,<26.0.0",
+    "flynt>=1.0.6,<2.0.0",
+    "isort>=6.0.1,<7.0.0",
+    "mypy>=1.17.1,<2.0.0",
+    "vulture>=2.14,<3.0",
+]
+test = []
+
+[tool.black]
+line-length = 120
+
+[tool.flynt]
+line_length = 120
+
+[tool.isort]
+profile = "black"
+line_length = 120
+combine_as_imports = true
+src_paths = ["src"]
+
+[tool.mypy]
+ignore_missing_imports = true
+files = "src/**/*.py"
+
+[tool.vulture]
+min_confidence = 70
+
+[tool.uv]
+python-downloads = "automatic"
