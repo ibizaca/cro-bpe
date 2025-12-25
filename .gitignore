@@ -261,4 +261,8 @@ pyrightconfig.json
 # UV
 .python-version
 
+# Project specific
+data/
+logs/
+
 
