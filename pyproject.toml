@@ -1,13 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.27.0,<2.0.0"]
+build-backend = "hatchling.build"
+
 [project]
 name = "cro-bpe"
-dynamic = ["version"]
+version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "datasets>=4.4.2",
     "mlflow[extras]>=3.8.0",
     "pydantic>=2.12.5",
+    "tokenizers>=0.21.4",
 ]
+
+[project.scripts]
+cro-bpe = "cro_bpe.main:main"
 
 [dependency-groups]
 dev = [
@@ -44,3 +52,6 @@ min_confidence = 70
 
 [tool.uv]
 python-downloads = "automatic"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cro_bpe"]
