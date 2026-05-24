@@ -1,13 +1,10 @@
 import json
 import logging
-from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
-from tokenizers import Tokenizer
-from tokenizers import decoders, models, normalizers, pre_tokenizers, trainers
+from tokenizers import Regex, Tokenizer, decoders, models, normalizers, pre_tokenizers, trainers
 from tokenizers.normalizers import Replace, Strip
 from tokenizers.pre_tokenizers import Metaspace
-from tokenizers.Regex import Regex
 
 from cro_bpe.config import PipelineConfig
 from cro_bpe.normalize import normalize_croatian_text
@@ -55,16 +52,18 @@ class TrainingMetadata(BaseModel):
 def prepare_corpus(config: PipelineConfig) -> CorpusStatistics:
     ensure_directories(config)
     dump_path = download_croatian_wikipedia_dump(config)
-    article_texts = iter_croatian_articles(dump_path=dump_path, article_limit=config.corpus.article_limit)
 
+    total_articles_seen = 0
     retained_articles = 0
     retained_characters = 0
     retained_words = 0
 
     with config.corpus_path.open("w", encoding="utf-8") as corpus_file:
-        for article_text in article_texts:
+        for article_text in iter_croatian_articles(dump_path=dump_path, article_limit=config.corpus.article_limit):
+            total_articles_seen += 1
             if len(article_text) < config.corpus.min_document_characters:
                 continue
+
             corpus_file.write(article_text)
             corpus_file.write("\n")
             retained_articles += 1
@@ -72,24 +71,23 @@ def prepare_corpus(config: PipelineConfig) -> CorpusStatistics:
             retained_words += len(article_text.split())
 
     corpus_statistics = CorpusStatistics(
-        total_articles_seen=len(article_texts),
+        total_articles_seen=total_articles_seen,
         retained_articles=retained_articles,
         retained_characters=retained_characters,
         retained_words=retained_words,
     )
-    logger.info("Prepared %s retained Croatian articles at %s", retained_articles, config.corpus_path)
+    logger.info(
+        "Prepared %s retained Croatian articles from %s parsed articles at %s",
+        retained_articles,
+        total_articles_seen,
+        config.corpus_path,
+    )
     return corpus_statistics
 
 
 def build_tokenizer(config: PipelineConfig) -> Tokenizer:
     tokenizer = Tokenizer(models.BPE(unk_token=config.tokenizer.special_tokens[0]))
-    tokenizer.normalizer = normalizers.Sequence(
-        [
-            normalizers.NFC(),
-            Replace(Regex(r"\s+"), " "),
-            Strip(),
-        ]
-    )
+    tokenizer.normalizer = normalizers.Sequence([normalizers.NFC(), Replace(Regex(r"\s+"), " "), Strip()])
     tokenizer.pre_tokenizer = pre_tokenizers.Sequence([Metaspace(replacement="▁", prepend_scheme="always")])
     tokenizer.decoder = decoders.Metaspace(replacement="▁", prepend_scheme="always")
     return tokenizer
@@ -158,6 +156,7 @@ def evaluate_tokenizer(config: PipelineConfig) -> EvaluationReport:
 
 
 def write_metadata(config: PipelineConfig, corpus_statistics: CorpusStatistics, evaluation: EvaluationReport) -> None:
+    ensure_directories(config)
     metadata = TrainingMetadata(
         source_name=config.source.dataset_name,
         source_url=str(config.source.dump_url),

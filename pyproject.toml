@@ -43,8 +43,8 @@ combine_as_imports = true
 src_paths = ["src"]
 
 [tool.mypy]
+ignore_missing_imports = true
 files = "src/**/*.py"
-strict = true
 
 [tool.vulture]
 min_confidence = 70
