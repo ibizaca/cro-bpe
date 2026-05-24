@@ -1,13 +1,20 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "cro-bpe"
-dynamic = ["version"]
+version = "0.1.0"
+description = "Croatian-only BPE tokenizer training pipeline"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "datasets>=4.4.2",
-    "mlflow[extras]>=3.8.0",
     "pydantic>=2.12.5",
+    "tokenizers>=0.22.1",
 ]
+
+[project.scripts]
+cro-bpe = "cro_bpe.cli:main"
 
 [dependency-groups]
 dev = [
@@ -36,11 +43,14 @@ combine_as_imports = true
 src_paths = ["src"]
 
 [tool.mypy]
-ignore_missing_imports = true
 files = "src/**/*.py"
+strict = true
 
 [tool.vulture]
 min_confidence = 70
 
-[tool.uv]
-python-downloads = "automatic"
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
