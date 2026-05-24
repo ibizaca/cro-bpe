@@ -12,14 +12,20 @@ logger = get_logger(__name__)
 def run(config: RunConfig, paths: ProjectPaths) -> SourceManifest:
     logger.info("Starting controlled download for source '%s'", config.source.source_id)
 
-    builder = load_dataset_builder(config.source.dataset_name, config.source.dataset_config)
-    dataset = load_dataset(
-        config.source.dataset_name,
-        config.source.dataset_config,
-        split=config.source.split,
-        streaming=config.source.streaming,
-        revision=config.source.revision,
-    )
+    try:
+        builder = load_dataset_builder(config.source.dataset_name, config.source.dataset_config)
+        dataset = load_dataset(
+            config.source.dataset_name,
+            config.source.dataset_config,
+            split=config.source.split,
+            streaming=config.source.streaming,
+            revision=config.source.revision,
+        )
+    except Exception as error:
+        raise RuntimeError(
+            "Unable to access the approved Croatian dataset source. "
+            "Check network access to Hugging Face or rerun with a locally cached Croatian Wikipedia copy."
+        ) from error
 
     raw_path = paths.raw_dir / config.artifacts.raw_documents_filename
     statistics = {
