@@ -86,8 +86,16 @@ def _flatten_dictionary(payload: dict[str, object], prefix: str) -> dict[str, st
             flattened_payload[flattened_key] = ",".join(str(item) for item in value)
         elif value is None:
             flattened_payload[flattened_key] = "None"
-        else:
+        elif isinstance(value, bool):
             flattened_payload[flattened_key] = value
+        elif isinstance(value, int):
+            flattened_payload[flattened_key] = value
+        elif isinstance(value, float):
+            flattened_payload[flattened_key] = value
+        elif isinstance(value, str):
+            flattened_payload[flattened_key] = value
+        else:
+            flattened_payload[flattened_key] = str(value)
     return flattened_payload
 
 

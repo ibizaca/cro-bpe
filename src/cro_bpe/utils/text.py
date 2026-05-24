@@ -16,7 +16,13 @@ CONTROL_TRANSLATION = str.maketrans({chr(codepoint): " " for codepoint in range(
 
 
 def normalize_text(text: str, config: PreprocessingConfig) -> str:
-    normalized_text = unicodedata.normalize(config.unicode_normalization_form, text)
+    if config.unicode_normalization_form == "NFC":
+        normalized_text = unicodedata.normalize("NFC", text)
+    elif config.unicode_normalization_form == "NFKC":
+        normalized_text = unicodedata.normalize("NFKC", text)
+    else:
+        raise ValueError(f"Unsupported normalization form '{config.unicode_normalization_form}'")
+
     normalized_text = normalized_text.translate(CONTROL_TRANSLATION)
 
     if config.strip_markup:

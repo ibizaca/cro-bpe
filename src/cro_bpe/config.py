@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 DISALLOWED_LANGUAGE_MARKERS = [
     "bosnian",
@@ -37,6 +37,14 @@ class WorkflowConfig(BaseModel):
 
 class DatasetSourceConfig(BaseModel):
     source_id: str = Field(default="croatian_wikipedia")
+    dataset_name: str = Field(default="")
+    dataset_config: str = Field(default="")
+    split: str = Field(default="")
+    text_field: str = Field(default="")
+    id_field: str = Field(default="")
+    title_field: str = Field(default="")
+    language: str = Field(default="")
+    corpus_name: str = Field(default="")
     revision: str | None = Field(default=None)
     streaming: bool = Field(default=True)
     max_documents: int | None = Field(default=None, ge=1)
@@ -46,53 +54,21 @@ class DatasetSourceConfig(BaseModel):
         if self.source_id not in APPROVED_SOURCES:
             raise ValueError(f"Source '{self.source_id}' is not in the Croatian allowlist.")
 
-        source_signature = " ".join(str(value).lower() for value in APPROVED_SOURCES[self.source_id].values())
+        approved_source = APPROVED_SOURCES[self.source_id]
+        source_signature = " ".join(str(value).lower() for value in approved_source.values())
         rejected_markers = [marker for marker in DISALLOWED_LANGUAGE_MARKERS if marker in source_signature]
         if rejected_markers:
             raise ValueError(
                 f"Source '{self.source_id}' contains disallowed language markers: {', '.join(rejected_markers)}"
             )
+        for field_name, expected_value in approved_source.items():
+            current_value = getattr(self, field_name)
+            if current_value and current_value != expected_value:
+                raise ValueError(
+                    f"Field '{field_name}' does not match the approved Croatian source definition for '{self.source_id}'."
+                )
+            setattr(self, field_name, expected_value)
         return self
-
-    @computed_field
-    @property
-    def dataset_name(self) -> str:
-        return APPROVED_SOURCES[self.source_id]["dataset_name"]
-
-    @computed_field
-    @property
-    def dataset_config(self) -> str:
-        return APPROVED_SOURCES[self.source_id]["dataset_config"]
-
-    @computed_field
-    @property
-    def split(self) -> str:
-        return APPROVED_SOURCES[self.source_id]["split"]
-
-    @computed_field
-    @property
-    def text_field(self) -> str:
-        return APPROVED_SOURCES[self.source_id]["text_field"]
-
-    @computed_field
-    @property
-    def id_field(self) -> str:
-        return APPROVED_SOURCES[self.source_id]["id_field"]
-
-    @computed_field
-    @property
-    def title_field(self) -> str:
-        return APPROVED_SOURCES[self.source_id]["title_field"]
-
-    @computed_field
-    @property
-    def language(self) -> str:
-        return APPROVED_SOURCES[self.source_id]["language"]
-
-    @computed_field
-    @property
-    def corpus_name(self) -> str:
-        return APPROVED_SOURCES[self.source_id]["corpus_name"]
 
 
 class PreprocessingConfig(BaseModel):

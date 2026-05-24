@@ -67,6 +67,8 @@ def run(config: RunConfig, paths: ProjectPaths) -> PreprocessingSummary:
         raw_documents=artifact_digest(raw_path),
         cleaned_corpus=artifact_digest(output_path),
     )
-    write_json(paths.preprocessed_dir / config.artifacts.preprocessing_summary_filename, summary.model_dump(mode="json"))
+    write_json(
+        paths.preprocessed_dir / config.artifacts.preprocessing_summary_filename, summary.model_dump(mode="json")
+    )
     logger.info("Preprocessing retained %s documents", statistics["kept_documents"])
     return summary

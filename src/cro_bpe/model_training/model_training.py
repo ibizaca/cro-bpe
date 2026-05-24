@@ -32,7 +32,9 @@ def run(config: RunConfig, paths: ProjectPaths) -> TokenizerArtifactManifest:
     tokenizer_json_path = paths.models_dir / config.artifacts.tokenizer_filename
     tokenizer.save(str(tokenizer_json_path))
 
-    vocab_path, merges_path = _save_model_files(tokenizer=tokenizer, output_dir=paths.models_dir, prefix=config.artifacts.tokenizer_prefix)
+    vocab_path, merges_path = _save_model_files(
+        tokenizer=tokenizer, output_dir=paths.models_dir, prefix=config.artifacts.tokenizer_prefix
+    )
 
     sample_encoding = tokenizer.encode(config.tokenizer.smoke_test_text)
     decoded_text = tokenizer.decode(sample_encoding.ids)
