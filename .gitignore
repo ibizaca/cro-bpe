@@ -264,5 +264,6 @@ pyrightconfig.json
 # Project specific
 data/
 logs/
-
-
+# MLflow default store, created when `mlflow ui` runs without --backend-store-uri
+mlruns/
+mlartifacts/
