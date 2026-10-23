@@ -1,12 +1,27 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
 [project]
 name = "cro-bpe"
-dynamic = ["version"]
+version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.14"
+# Upper bounds stop at the next release allowed to break the API: the next major
+# version, or the next minor version for 0.x packages. pyarrow ships a major per release.
 dependencies = [
-    "datasets>=4.4.2",
-    "mlflow[extras]>=3.8.0",
-    "pydantic>=2.12.5",
+    "httpx>=0.28.1,<0.29",
+    "huggingface-hub>=1.2.3,<2",
+    "mlflow[extras]>=3.8.0,<4",
+    "mwparserfromhell>=0.7.2,<0.8",
+    "numpy>=2.4.0,<3",
+    "pyarrow>=22.0.0,<23",
+    "pydantic>=2.12.5,<3",
+    "tiktoken>=0.14.0,<0.15",
+    "tokenizers>=0.23.2,<0.24",
+    "tqdm>=4.67.1,<5",
+    "xxhash>=3.6.0,<4",
+    "zstandard>=0.25.0,<0.26",
 ]
 
 [dependency-groups]
@@ -15,32 +30,52 @@ dev = [
     { include-group = "test"},
 ]
 lint = [
-    "black>=25.1.0,<26.0.0",
-    "flynt>=1.0.6,<2.0.0",
-    "isort>=6.0.1,<7.0.0",
-    "mypy>=1.17.1,<2.0.0",
-    "vulture>=2.14,<3.0",
+    "mypy>=1.19.1,<2",
+    "ruff>=0.16.9,<0.17",
 ]
-test = []
+test = [
+    "pytest>=9.1.1,<10",
+]
 
-[tool.black]
+[tool.hatch.build.targets.wheel]
+# The stage packages are top-level imports (``import preprocessing``), as main.py expects.
+packages = [
+    "src/data_import",
+    "src/evaluation",
+    "src/feature_engineering",
+    "src/model_training",
+    "src/preprocessing",
+    "src/utils",
+]
+
+[tool.ruff]
 line-length = 120
+src = ["src", "tests"]
 
-[tool.flynt]
-line_length = 120
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, pyupgrade, bugbear and flynt (FLY) replace black's
+# companions; ruff format replaces black.
+select = ["E", "F", "W", "I", "UP", "B", "FLY"]
+# zip(strict=...) everywhere and StrEnum would change behaviour for little gain.
+ignore = ["B905", "UP042"]
 
-[tool.isort]
-profile = "black"
-line_length = 120
-combine_as_imports = true
-src_paths = ["src"]
+[tool.ruff.lint.per-file-ignores]
+# MLflow is blocked before the project modules are imported.
+"tests/conftest.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["data_import", "evaluation", "feature_engineering", "model_training", "preprocessing", "utils"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
 
 [tool.mypy]
 ignore_missing_imports = true
 files = "src/**/*.py"
-
-[tool.vulture]
-min_confidence = 70
+disallow_untyped_defs = true
+warn_return_any = true
 
 [tool.uv]
 python-downloads = "automatic"
