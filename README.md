@@ -22,6 +22,7 @@ lossless means the tokenizer reproduces the text exactly:
 | Tokenizer | Vocabulary | bytes/token | tokens/word | tokens vs. cro-bpe-32k | lossless |
 |---|---|---|---|---|---|
 | **cro-bpe-64k** | 64k | **4.76** | **1.41** | **0.92** | yes |
+| **cro-bpe-48k** | 48k | 4.62 | 1.46 | 0.95 | yes |
 | **cro-bpe-32k** | 32k | 4.39 | 1.53 | 1.00 | yes |
 | BERTić (BCMS encoder) | 32k | 4.36 | 1.54 | 1.01 | no |
 | EuroLLM | 128k | 3.35 | 2.01 | 1.31 | yes |
@@ -54,24 +55,52 @@ so `PYTHONPATH=src` is not needed.
 The models are built by the pipeline into `data/models/cro-bpe-<vocab>/`; they
 are not stored in this repository.
 
+### Hugging Face tokenizers
+
+Offsets, word ids and padding:
+
+```python
+from pathlib import Path
+
+from model_training.tokenizer import load_tokenizer
+
+model_dir = Path("data/models/cro-bpe-32k")
+tokenizer = load_tokenizer(model_dir)
+encoding = tokenizer.encode("Dobar dan, kako ste?")
+encoding.tokens  # ['Dobar', 'Ġdan', ',', 'Ġkako', 'Ġste', '?']
+encoding.ids  # [18251, 1347, 80, 566, 895, 99]
+tokenizer.decode(encoding.ids)  # 'Dobar dan, kako ste?'
+```
+
+### Outside this project, load `tokenizer.json` directly:
+
+```python
+from tokenizers import Tokenizer
+
+tokenizer = Tokenizer.from_file("data/models/cro-bpe-32k/tokenizer.json")
+
+# or with transformers (not a dependency of this project):
+from transformers import PreTrainedTokenizerFast
+
+tokenizer = PreTrainedTokenizerFast(tokenizer_file="data/models/cro-bpe-32k/tokenizer.json")
+```
+
+### Tiktoken
+
+The fast path, with the same ids; it NFC-normalizes like `tokenizer.json`:
+
 ```python
 from pathlib import Path
 
 from model_training.export import load_tiktoken
-from model_training.tokenizer import load_tokenizer
 
-model_dir = Path("data/models/cro-bpe-32k")
-tokenizer = load_tokenizer(model_dir)  # Hugging Face tokenizers; offsets, word ids, padding
-tokenizer.encode("Dobar dan, kako ste?").tokens
-
-encoding = load_tiktoken(model_dir)  # tiktoken fast path, same ids; NFC-normalizes like tokenizer.json
-encoding.encode_ordinary("Dobar dan, kako ste?")
+encoding = load_tiktoken(Path("data/models/cro-bpe-32k"))
+ids = encoding.encode_ordinary("Dobar dan, kako ste?")  # [18251, 1347, 80, 566, 895, 99]
+encoding.decode(ids)  # 'Dobar dan, kako ste?'
 encoding.encode("<|mask|>", allowed_special="all")  # [2]
 ```
 
-`tokenizer.json` can also be loaded directly with
-`tokenizers.Tokenizer.from_file` or `transformers.PreTrainedTokenizerFast`. For
-inputs from the same kind of sources, apply
+For inputs from the same kind of sources, apply
 `preprocessing.cleaning.normalize_text` first to match the training
 distribution.
 
