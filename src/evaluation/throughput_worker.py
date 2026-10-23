@@ -11,8 +11,6 @@ Usage::
     RAYON_NUM_THREADS=4 uv run python -m evaluation.throughput_worker tiktoken_builtin o200k_base 4
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import time

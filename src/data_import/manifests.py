@@ -5,8 +5,6 @@ Each source in the catalog gets a manifest.json written to
 so a partial run never leaves a corrupt manifest on disk.
 """
 
-from __future__ import annotations
-
 from enum import StrEnum
 from pathlib import Path
 

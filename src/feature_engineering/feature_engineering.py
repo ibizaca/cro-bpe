@@ -36,8 +36,6 @@ Usage::
     uv run python -m feature_engineering.feature_engineering
 """
 
-from __future__ import annotations
-
 import os
 from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor, as_completed

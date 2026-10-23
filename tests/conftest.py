@@ -1,7 +1,5 @@
 """Shared fixtures: a tiny tokenizer trained with the production definition, and its tiktoken export."""
 
-from __future__ import annotations
-
 import random
 import sys
 from collections.abc import Callable

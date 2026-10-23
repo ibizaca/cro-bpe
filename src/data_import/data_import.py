@@ -26,8 +26,6 @@ Usage::
 Or via ``main.py`` which calls :func:`run`.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from datetime import UTC, datetime

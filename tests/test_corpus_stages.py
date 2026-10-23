@@ -1,7 +1,5 @@
 """Preprocessing and feature engineering on tiny sources: outputs, fingerprints and rebuilds."""
 
-from __future__ import annotations
-
 import json
 import random
 from pathlib import Path

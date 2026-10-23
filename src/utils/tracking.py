@@ -5,8 +5,6 @@ imports ``mlflow`` (lazily, on first use); :class:`NullTracker` records nothing
 and is what the tests use.
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from logging import WARNING, getLogger

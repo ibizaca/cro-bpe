@@ -9,8 +9,6 @@ the :class:`ReadReport` passed to :func:`stream_source`, so data loss is
 visible in the source manifest instead of silent.
 """
 
-from __future__ import annotations
-
 import bz2
 import gzip
 import json

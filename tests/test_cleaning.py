@@ -1,7 +1,5 @@
 """Regression tests for text normalization and Wikipedia residue cleaning."""
 
-from __future__ import annotations
-
 import pytest
 
 from preprocessing.cleaning import clean_wikitext_residue, normalize_text

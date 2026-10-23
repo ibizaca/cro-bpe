@@ -5,8 +5,6 @@ the files keep their layout; :meth:`SummaryRow.flat` produces the summary
 table's dotted keys (``encode_batch.4.megabytes_per_second``).
 """
 
-from __future__ import annotations
-
 import statistics
 from typing import Any, Literal
 

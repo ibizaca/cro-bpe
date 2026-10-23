@@ -1,7 +1,5 @@
 """Source readers on tiny fixture files, one per format."""
 
-from __future__ import annotations
-
 import bz2
 import gzip
 import io

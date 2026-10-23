@@ -1,7 +1,5 @@
 """MinHash band hashes and the near-duplicate rule."""
 
-from __future__ import annotations
-
 import random
 
 import numpy as np

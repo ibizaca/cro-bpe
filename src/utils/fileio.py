@@ -1,7 +1,5 @@
 """File helpers: atomic writes (readers never see a half-written file), checksums and the run lock."""
 
-from __future__ import annotations
-
 import fcntl
 import hashlib
 import os

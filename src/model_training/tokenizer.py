@@ -1,7 +1,5 @@
 """Byte-level BPE tokenizer definition for Croatian."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from tokenizers import Regex, Tokenizer, decoders, models, normalizers, pre_tokenizers, processors, trainers

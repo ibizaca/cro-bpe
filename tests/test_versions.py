@@ -9,8 +9,6 @@ such module's source hash next to its version. When the code changes it fails:
 - either way, update ``tests/versions.json`` with the values the failure prints.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 from pathlib import Path

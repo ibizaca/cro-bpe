@@ -1,7 +1,5 @@
 """Tokenizer definition: special-token ids, pre-tokenization, round-trip and loading."""
 
-from __future__ import annotations
-
 import unicodedata
 from pathlib import Path
 
