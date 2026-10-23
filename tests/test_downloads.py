@@ -1,7 +1,5 @@
 """HTTP downloader retries and resume, Hugging Face downloads and the pipeline's source check."""
 
-from __future__ import annotations
-
 import random
 from collections.abc import Callable
 from pathlib import Path

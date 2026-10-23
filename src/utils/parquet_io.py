@@ -1,7 +1,5 @@
 """Schemas and writer options shared by every stage that writes Parquet."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from types import TracebackType
 from typing import Any

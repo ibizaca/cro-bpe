@@ -1,7 +1,5 @@
 """Baseline downloads and results without throughput, against a fake Hub (no network)."""
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 

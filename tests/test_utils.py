@@ -1,7 +1,5 @@
 """Shared utilities: data paths, atomic writes, rolling Parquet shards and artifact contracts."""
 
-from __future__ import annotations
-
 import json
 import os
 from pathlib import Path

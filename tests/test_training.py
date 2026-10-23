@@ -1,7 +1,5 @@
 """Model training: truncation from one run, export-check sampling, atomic model directories."""
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 

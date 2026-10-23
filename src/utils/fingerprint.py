@@ -5,8 +5,6 @@ module ``VERSION`` constants, input files) next to the output and rebuilds when
 the stored value differs.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 from collections.abc import Iterable

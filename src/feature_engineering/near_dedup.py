@@ -18,8 +18,6 @@ fingerprint of the shard (name and size), the MinHash settings and
 file deleted.
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterable
 from pathlib import Path
 

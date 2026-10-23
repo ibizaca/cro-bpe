@@ -5,8 +5,6 @@ Python-level match objects; a lookup table over the UTF-32 code points does
 all classes in a few numpy operations.
 """
 
-from __future__ import annotations
-
 import re
 
 import numpy as np

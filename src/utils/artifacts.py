@@ -4,8 +4,6 @@ Every file is validated on load (unknown or missing keys raise) and written
 atomically, so a renamed field fails loudly instead of being read as missing.
 """
 
-from __future__ import annotations
-
 import platform
 import subprocess
 from importlib import metadata

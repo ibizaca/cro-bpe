@@ -24,8 +24,6 @@ Usage::
     uv run python -m preprocessing.preprocessing
 """
 
-from __future__ import annotations
-
 import os
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed

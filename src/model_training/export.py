@@ -17,8 +17,6 @@ gate compares against ``encode(..., allowed_special="all")``; preprocessing
 removes such strings from the training data.
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import unicodedata

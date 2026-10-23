@@ -5,8 +5,6 @@ filters remove extraction noise (markup, code, tables, repeated boilerplate)
 and stray non-Latin-script documents that would otherwise waste vocabulary.
 """
 
-from __future__ import annotations
-
 from collections import Counter
 
 from pydantic import BaseModel, Field

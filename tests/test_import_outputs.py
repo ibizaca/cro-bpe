@@ -1,7 +1,5 @@
 """Parquet shard writing and manifest-based skipping of completed sources."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from unittest import mock
 

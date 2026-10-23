@@ -4,8 +4,6 @@ All functions are pure ``str -> str`` transforms so they can be reused at
 tokenizer inference time and tested in isolation.
 """
 
-from __future__ import annotations
-
 import html
 import re
 import unicodedata

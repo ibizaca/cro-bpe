@@ -1,7 +1,5 @@
 """Evaluation metrics on the tiny tokenizer."""
 
-from __future__ import annotations
-
 import math
 
 from tokenizers import Tokenizer

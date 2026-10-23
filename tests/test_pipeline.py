@@ -4,8 +4,6 @@ No MLflow (``NullTracker``), no network (baselines come from a fake Hub), one
 short benchmark round.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest

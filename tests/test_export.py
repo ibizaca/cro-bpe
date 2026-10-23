@@ -1,7 +1,5 @@
 """tiktoken export: rank file contents, special tokens and the equality gate."""
 
-from __future__ import annotations
-
 import json
 import unicodedata
 from pathlib import Path
