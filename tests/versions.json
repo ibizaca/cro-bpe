@@ -1,0 +1,30 @@
+{
+  "preprocessing.preprocessing": {
+    "version": 1,
+    "sha256": "ef690ec105a9bb3ff750c9e473791b1041010a74c28c16270aabccea68ad5857"
+  },
+  "preprocessing.cleaning": {
+    "version": 1,
+    "sha256": "4599c8f0e819c5805f200f6d3ac6d7c93356ac8e339d799eaca08a07983eabdd"
+  },
+  "preprocessing.filters": {
+    "version": 1,
+    "sha256": "aad5ddb11f1237951e116db36b0f4ed8232b038c5d2df1bd907059ce28c187f6"
+  },
+  "preprocessing.charclasses": {
+    "version": 1,
+    "sha256": "ba5f6eb1f2ac1a6f8de367110f56854c77c55c4a733ec17079a705ab6cb4514e"
+  },
+  "feature_engineering.feature_engineering": {
+    "version": 2,
+    "sha256": "229f4fe64e68dcfb4cf2d6850e5fe97c83211227177d6bca99507412c2d98069"
+  },
+  "feature_engineering.mixture": {
+    "version": 1,
+    "sha256": "edf527d5e047fc7fb0925ffc7262b88ade547990f83cd7605d72ebff25ebe639"
+  },
+  "feature_engineering.near_dedup": {
+    "version": 1,
+    "sha256": "43425e71fda8ded9e5aabb700dc5a62a7ebc2b6a5ce6ab84d09eb57ab70a8e8c"
+  }
+}

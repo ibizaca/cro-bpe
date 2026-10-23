@@ -1,3 +1,3 @@
-from .preprocessing import run as run_preprocessing
+from .preprocessing import PreprocessingSettings, run as run_preprocessing
 
-__all__ = ["run_preprocessing"]
+__all__ = ["PreprocessingSettings", "run_preprocessing"]

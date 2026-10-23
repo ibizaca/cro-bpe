@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use cro-bpe, please cite it as below."
+type: software
+title: "cro-bpe: A Byte-Level BPE Tokenizer for Croatian"
+abstract: >-
+  A byte-level BPE tokenizer trained on a curated monolingual Croatian corpus,
+  with a tiktoken export and the full pipeline from corpus download to evaluation.
+authors:
+  - family-names: Bizaca
+    given-names: Ivan
+    alias: "Ivan Bižaca"
+repository-code: "https://github.com/ibizaca/cro-bpe"
+url: "https://github.com/ibizaca/cro-bpe"
+license: Apache-2.0
+version: 0.1.0
+keywords:
+  - tokenizer
+  - byte pair encoding
+  - Croatian
+  - natural language processing
