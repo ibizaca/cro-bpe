@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# requires-python has no upper bound, so uv would otherwise pick the newest Python,
+# for which some dependencies have no wheels yet.
+env:
+  UV_PYTHON: "3.14"
+
 jobs:
   lint:
     runs-on: ubuntu-latest
