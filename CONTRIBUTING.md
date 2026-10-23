@@ -1,7 +1,29 @@
 # Contributing
 
-Issues and pull requests are welcome. There is no CI, so run the tests and
-checks below locally before opening a pull request.
+Issues and pull requests are welcome. CI runs the checks and tests below on
+every pull request, but running them locally first saves a round trip.
+
+## Submitting changes
+
+Every change reaches `main` through a pull request; nobody pushes to it
+directly.
+
+1. Fork the repository and clone your fork.
+2. Create a branch in your fork and commit your changes there.
+3. Push the branch to your fork and open a pull request against `main`.
+
+Collaborators with write access can skip the fork and push a branch to this
+repository instead. Its name must start with `feature/`, `fix/` or `docs/`.
+
+A pull request can be merged when:
+
+- **CI passes.** The workflow in `.github/workflows/ci.yml` runs `lint` (ruff
+  and mypy), then `test` (pytest). For a first-time contributor, a maintainer
+  approves the run before it starts.
+- **A maintainer approves it.** Anyone can review, but only approvals from
+  people with write access count. New commits dismiss earlier approvals.
+- **All review conversations are resolved.**
+- **The branch is up to date with `main`.**
 
 ## Development setup
 
