@@ -19,47 +19,6 @@ _REST_BUCKET = "rest"
 _WORD = re.compile(r"\S+")
 
 
-def _ratio(numerator: float, denominator: float) -> float:
-    # Mixture counts are rescaled to fractions, so no max(1, ...) guard.
-    return numerator / denominator if denominator else 0.0
-
-
-def _ratios(counts: Counter[str] | dict[str, float], has_pre_tokenizer: bool) -> dict[str, float | None]:
-    return {
-        "bytes_per_token": _ratio(counts["bytes"], counts["tokens"]),
-        "characters_per_token": _ratio(counts["characters"], counts["tokens"]),
-        "tokens_per_word": _ratio(counts["tokens"], counts["words"]),
-        "split_word_rate": _ratio(counts["split_pretokens"], counts["pretokens"]) if has_pre_tokenizer else None,
-    }
-
-
-def _quality(counts: Counter[str], has_pre_tokenizer: bool) -> QualityMetrics:
-    return QualityMetrics.model_validate(
-        {
-            "documents": counts["documents"],
-            "tokens": counts["tokens"],
-            **_ratios(counts, has_pre_tokenizer),
-            "roundtrip_failures": counts["roundtrip_failures"],
-        }
-    )
-
-
-def _mixture_counts(totals: dict[str, Counter[str]], weights: dict[str, float]) -> dict[str, float]:
-    """Per-source counts rescaled so each source contributes its weight's share of the bytes."""
-
-    present = {
-        source: weight
-        for source, weight in weights.items()
-        if source in totals and totals[source]["bytes"] > 0 and weight > 0
-    }
-    weighted: defaultdict[str, float] = defaultdict(float)
-    for source, weight in present.items():
-        scale = weight / sum(present.values()) / totals[source]["bytes"]
-        for key, value in totals[source].items():
-            weighted[key] += value * scale
-    return weighted
-
-
 def quality_metrics(
     tokenizer: Tokenizer,
     texts: list[str],
@@ -114,6 +73,47 @@ def quality_metrics(
     return results
 
 
+def _quality(counts: Counter[str], has_pre_tokenizer: bool) -> QualityMetrics:
+    return QualityMetrics.model_validate(
+        {
+            "documents": counts["documents"],
+            "tokens": counts["tokens"],
+            **_ratios(counts, has_pre_tokenizer),
+            "roundtrip_failures": counts["roundtrip_failures"],
+        }
+    )
+
+
+def _ratios(counts: Counter[str] | dict[str, float], has_pre_tokenizer: bool) -> dict[str, float | None]:
+    return {
+        "bytes_per_token": _ratio(counts["bytes"], counts["tokens"]),
+        "characters_per_token": _ratio(counts["characters"], counts["tokens"]),
+        "tokens_per_word": _ratio(counts["tokens"], counts["words"]),
+        "split_word_rate": _ratio(counts["split_pretokens"], counts["pretokens"]) if has_pre_tokenizer else None,
+    }
+
+
+def _ratio(numerator: float, denominator: float) -> float:
+    # Mixture counts are rescaled to fractions, so no max(1, ...) guard.
+    return numerator / denominator if denominator else 0.0
+
+
+def _mixture_counts(totals: dict[str, Counter[str]], weights: dict[str, float]) -> dict[str, float]:
+    """Per-source counts rescaled so each source contributes its weight's share of the bytes."""
+
+    present = {
+        source: weight
+        for source, weight in weights.items()
+        if source in totals and totals[source]["bytes"] > 0 and weight > 0
+    }
+    weighted: defaultdict[str, float] = defaultdict(float)
+    for source, weight in present.items():
+        scale = weight / sum(present.values()) / totals[source]["bytes"]
+        for key, value in totals[source].items():
+            weighted[key] += value * scale
+    return weighted
+
+
 def vocabulary_metrics(tokenizer: Tokenizer, texts: list[str], renyi_alpha: float) -> VocabularyMetrics:
     """Vocabulary size, share used on *texts*, mean token length and Rényi efficiency.
 
@@ -138,14 +138,6 @@ def vocabulary_metrics(tokenizer: Tokenizer, texts: list[str], renyi_alpha: floa
         mean_token_characters=float(np.mean([length for length in lengths if length > 0])),
         renyi_efficiency=float(renyi_entropy / np.log(vocab_size)),
     )
-
-
-def _bucket(rank: int | None) -> str:
-    if rank is not None:
-        for bucket, upper in FERTILITY_BUCKETS.items():
-            if rank < upper:
-                return bucket
-    return _REST_BUCKET
 
 
 def rare_word_fertility(
@@ -180,3 +172,11 @@ def rare_word_fertility(
         bucket: FertilityBucket(words=words[bucket], tokens_per_word=tokens[bucket] / max(1, words[bucket]))
         for bucket in [*FERTILITY_BUCKETS, _REST_BUCKET]
     }
+
+
+def _bucket(rank: int | None) -> str:
+    if rank is not None:
+        for bucket, upper in FERTILITY_BUCKETS.items():
+            if rank < upper:
+                return bucket
+    return _REST_BUCKET

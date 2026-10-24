@@ -62,6 +62,44 @@ def load_builtin_encoding(name: str, data_root: Path) -> tiktoken.Encoding:
     return tiktoken.get_encoding(name)
 
 
+def throughput_benchmark(
+    candidates: list[BenchmarkCandidate],
+    threads: list[int],
+    rounds: int,
+    min_seconds: float,
+    sequential_max_bytes: int,
+    data_root: Path,
+) -> dict[str, ThroughputSummary]:
+    """Interleaved, subprocess-isolated benchmark of every candidate; see the module docstring."""
+
+    full_threads = max(threads)
+    runs: dict[str, dict[int, list[dict[str, float]]]] = defaultdict(lambda: defaultdict(list))
+    for round_number in range(1, rounds + 1):
+        logger.info("Throughput round %d/%d, CPU %s", round_number, rounds, cpu_state())
+        for candidate in candidates:
+            for thread_count in threads:
+                result = _run_worker(
+                    candidate,
+                    thread_count,
+                    min_seconds,
+                    sequential_max_bytes if thread_count == full_threads else None,
+                    data_root,
+                )
+                runs[candidate.name][thread_count].append(result)
+                logger.info(
+                    "  %s, %d threads: %.2fM tokens/s (%.1f MB/s) sustained, %.1f MB/s burst",
+                    candidate.name,
+                    thread_count,
+                    result["encode_batch_tokens_per_second"] / 1e6,
+                    result["encode_batch_megabytes_per_second"],
+                    result["encode_batch_burst_megabytes_per_second"],
+                )
+    return {
+        candidate.name: _summarize(runs[candidate.name], full_threads, rounds, min_seconds, candidate.cache_capacity)
+        for candidate in candidates
+    }
+
+
 def cpu_state() -> CpuState:
     """Current mean CPU clock and CPU package temperature, where the OS exposes them."""
 
@@ -134,41 +172,3 @@ def _summarize(
         ),
         decode_batch_tokens_per_second=Spread.of([run["decode_batch_tokens_per_second"] for run in full_runs]),
     )
-
-
-def throughput_benchmark(
-    candidates: list[BenchmarkCandidate],
-    threads: list[int],
-    rounds: int,
-    min_seconds: float,
-    sequential_max_bytes: int,
-    data_root: Path,
-) -> dict[str, ThroughputSummary]:
-    """Interleaved, subprocess-isolated benchmark of every candidate; see the module docstring."""
-
-    full_threads = max(threads)
-    runs: dict[str, dict[int, list[dict[str, float]]]] = defaultdict(lambda: defaultdict(list))
-    for round_number in range(1, rounds + 1):
-        logger.info("Throughput round %d/%d, CPU %s", round_number, rounds, cpu_state())
-        for candidate in candidates:
-            for thread_count in threads:
-                result = _run_worker(
-                    candidate,
-                    thread_count,
-                    min_seconds,
-                    sequential_max_bytes if thread_count == full_threads else None,
-                    data_root,
-                )
-                runs[candidate.name][thread_count].append(result)
-                logger.info(
-                    "  %s, %d threads: %.2fM tokens/s (%.1f MB/s) sustained, %.1f MB/s burst",
-                    candidate.name,
-                    thread_count,
-                    result["encode_batch_tokens_per_second"] / 1e6,
-                    result["encode_batch_megabytes_per_second"],
-                    result["encode_batch_burst_megabytes_per_second"],
-                )
-    return {
-        candidate.name: _summarize(runs[candidate.name], full_threads, rounds, min_seconds, candidate.cache_capacity)
-        for candidate in candidates
-    }

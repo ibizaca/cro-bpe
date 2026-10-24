@@ -77,26 +77,6 @@ class FeatureEngineeringSettings(BaseModel):
     data_root: Path = Field(default_factory=default_data_root, description="Root of the data/ directory.")
 
 
-def corpus_fingerprint(settings: FeatureEngineeringSettings, sources: list[str]) -> str:
-    """Fingerprint of everything the training and holdout corpora depend on."""
-
-    paths = DataPaths(settings.data_root)
-    inputs = {
-        source: {
-            "stats": SourceStats.load(paths.source_stats(source)).fingerprint,
-            "shards": file_signatures(sorted(paths.preprocessed_source(source).glob("part-*.parquet"))),
-        }
-        for source in sources
-    }
-    return fingerprint(
-        {"feature_engineering": VERSION, "mixture": mixture.VERSION, "near_dedup": near_dedup.VERSION},
-        settings.model_dump(exclude={"data_root", "workers"}),
-        mixture.SOURCE_PRIORITY,
-        mixture.MIXTURE_WEIGHTS,
-        inputs,
-    )
-
-
 class _SourceIndex:
     """Hash and size columns of one source's preprocessed shards."""
 
@@ -107,81 +87,6 @@ class _SourceIndex:
         self.shard_rows = np.array([table.num_rows for table in tables], dtype=np.int64)
         self.hashes = np.concatenate([table.column("hash").to_numpy() for table in tables])
         self.sizes = np.concatenate([table.column("n_bytes").to_numpy() for table in tables])
-
-
-def _signature_files(indexes: list[_SourceIndex], settings: FeatureEngineeringSettings) -> list[Path]:
-    """Band-hash cache file of every shard, in index order; missing ones are computed in parallel."""
-
-    paths = DataPaths(settings.data_root)
-    minhash = (settings.minhash_ngram, settings.minhash_bands, settings.minhash_rows)
-    files, pending = [], []
-    for index in indexes:
-        cache_dir = paths.minhash_source(index.source_id)
-        expected = [near_dedup.signature_path(shard, cache_dir, *minhash) for shard in index.shards]
-        for stale in set(cache_dir.glob("*.npy")) - set(expected):
-            stale.unlink()
-        files += expected
-        pending += [(shard, path) for shard, path in zip(index.shards, expected) if not path.is_file()]
-    logger.info(
-        "Band hashes: %d of %d shards cached, computing %d", len(files) - len(pending), len(files), len(pending)
-    )
-    with ProcessPoolExecutor(max_workers=settings.workers) as executor:
-        futures = [executor.submit(near_dedup.shard_signatures, shard, path, *minhash) for shard, path in pending]
-        for completed, future in enumerate(as_completed(futures), start=1):
-            future.result()
-            if completed % 50 == 0 or completed == len(futures):
-                logger.info("Band hashes computed for %d/%d shards", completed, len(futures))
-    return files
-
-
-def _band_columns(files: list[Path], bands: int) -> Iterator[np.ndarray]:
-    """One band's hashes for every document at a time, concatenated in index order."""
-
-    for band in range(bands):
-        yield np.concatenate([np.load(path, mmap_mode="r")[band] for path in files])
-
-
-def _holdout_mask(hashes: np.ndarray, keep: np.ndarray, settings: FeatureEngineeringSettings) -> np.ndarray:
-    """Pick the kept documents with the smallest split key (high hash bits)."""
-
-    candidates = np.flatnonzero(keep)
-    count = min(settings.holdout_docs_per_source, int(len(candidates) * settings.holdout_max_fraction))
-    mask = np.zeros(len(hashes), dtype=bool)
-    if count > 0:
-        split_keys = hashes[candidates] >> np.uint64(32)
-        mask[candidates[np.argpartition(split_keys, count - 1)[:count]]] = True
-    return mask
-
-
-def _sample_mask(hashes: np.ndarray, candidates: np.ndarray, fraction: float) -> np.ndarray:
-    """Deterministic Bernoulli sample on the low 32 hash bits."""
-
-    threshold = np.uint64(min(1.0, fraction) * 2**32)
-    return candidates & ((hashes & np.uint64(0xFFFFFFFF)) < threshold)
-
-
-def _write_selected(
-    index: _SourceIndex, train: np.ndarray, holdout: np.ndarray, writers: dict[str, RollingParquetWriter]
-) -> None:
-    offsets = np.concatenate([[0], np.cumsum(index.shard_rows)])
-    for shard, start, stop in zip(index.shards, offsets[:-1], offsets[1:]):
-        split_masks = {"train": train[start:stop], "holdout": holdout[start:stop]}
-        if not any(mask.any() for mask in split_masks.values()):
-            continue
-        table = pq.read_table(shard, columns=["text", "source"]).cast(CORPUS_SCHEMA)
-        for split, mask in split_masks.items():
-            if mask.any():
-                writers[split].write(table.filter(pa.array(mask)))
-
-
-def _previous_summary(path: Path) -> MixtureSummary | None:
-    if not path.is_file():
-        return None
-    try:
-        return MixtureSummary.load(path)
-    except ValidationError:
-        logger.info("%s has an outdated format, rebuilding", path.name)
-        return None
 
 
 def run(settings: FeatureEngineeringSettings | None = None) -> MixtureSummary:
@@ -291,6 +196,101 @@ def run(settings: FeatureEngineeringSettings | None = None) -> MixtureSummary:
     )
     summary.save(paths.mixture)
     return summary
+
+
+def corpus_fingerprint(settings: FeatureEngineeringSettings, sources: list[str]) -> str:
+    """Fingerprint of everything the training and holdout corpora depend on."""
+
+    paths = DataPaths(settings.data_root)
+    inputs = {
+        source: {
+            "stats": SourceStats.load(paths.source_stats(source)).fingerprint,
+            "shards": file_signatures(sorted(paths.preprocessed_source(source).glob("part-*.parquet"))),
+        }
+        for source in sources
+    }
+    return fingerprint(
+        {"feature_engineering": VERSION, "mixture": mixture.VERSION, "near_dedup": near_dedup.VERSION},
+        settings.model_dump(exclude={"data_root", "workers"}),
+        mixture.SOURCE_PRIORITY,
+        mixture.MIXTURE_WEIGHTS,
+        inputs,
+    )
+
+
+def _previous_summary(path: Path) -> MixtureSummary | None:
+    if not path.is_file():
+        return None
+    try:
+        return MixtureSummary.load(path)
+    except ValidationError:
+        logger.info("%s has an outdated format, rebuilding", path.name)
+        return None
+
+
+def _signature_files(indexes: list[_SourceIndex], settings: FeatureEngineeringSettings) -> list[Path]:
+    """Band-hash cache file of every shard, in index order; missing ones are computed in parallel."""
+
+    paths = DataPaths(settings.data_root)
+    minhash = (settings.minhash_ngram, settings.minhash_bands, settings.minhash_rows)
+    files, pending = [], []
+    for index in indexes:
+        cache_dir = paths.minhash_source(index.source_id)
+        expected = [near_dedup.signature_path(shard, cache_dir, *minhash) for shard in index.shards]
+        for stale in set(cache_dir.glob("*.npy")) - set(expected):
+            stale.unlink()
+        files += expected
+        pending += [(shard, path) for shard, path in zip(index.shards, expected) if not path.is_file()]
+    logger.info(
+        "Band hashes: %d of %d shards cached, computing %d", len(files) - len(pending), len(files), len(pending)
+    )
+    with ProcessPoolExecutor(max_workers=settings.workers) as executor:
+        futures = [executor.submit(near_dedup.shard_signatures, shard, path, *minhash) for shard, path in pending]
+        for completed, future in enumerate(as_completed(futures), start=1):
+            future.result()
+            if completed % 50 == 0 or completed == len(futures):
+                logger.info("Band hashes computed for %d/%d shards", completed, len(futures))
+    return files
+
+
+def _band_columns(files: list[Path], bands: int) -> Iterator[np.ndarray]:
+    """One band's hashes for every document at a time, concatenated in index order."""
+
+    for band in range(bands):
+        yield np.concatenate([np.load(path, mmap_mode="r")[band] for path in files])
+
+
+def _holdout_mask(hashes: np.ndarray, keep: np.ndarray, settings: FeatureEngineeringSettings) -> np.ndarray:
+    """Pick the kept documents with the smallest split key (high hash bits)."""
+
+    candidates = np.flatnonzero(keep)
+    count = min(settings.holdout_docs_per_source, int(len(candidates) * settings.holdout_max_fraction))
+    mask = np.zeros(len(hashes), dtype=bool)
+    if count > 0:
+        split_keys = hashes[candidates] >> np.uint64(32)
+        mask[candidates[np.argpartition(split_keys, count - 1)[:count]]] = True
+    return mask
+
+
+def _sample_mask(hashes: np.ndarray, candidates: np.ndarray, fraction: float) -> np.ndarray:
+    """Deterministic Bernoulli sample on the low 32 hash bits."""
+
+    threshold = np.uint64(min(1.0, fraction) * 2**32)
+    return candidates & ((hashes & np.uint64(0xFFFFFFFF)) < threshold)
+
+
+def _write_selected(
+    index: _SourceIndex, train: np.ndarray, holdout: np.ndarray, writers: dict[str, RollingParquetWriter]
+) -> None:
+    offsets = np.concatenate([[0], np.cumsum(index.shard_rows)])
+    for shard, start, stop in zip(index.shards, offsets[:-1], offsets[1:]):
+        split_masks = {"train": train[start:stop], "holdout": holdout[start:stop]}
+        if not any(mask.any() for mask in split_masks.values()):
+            continue
+        table = pq.read_table(shard, columns=["text", "source"]).cast(CORPUS_SCHEMA)
+        for split, mask in split_masks.items():
+            if mask.any():
+                writers[split].write(table.filter(pa.array(mask)))
 
 
 if __name__ == "__main__":

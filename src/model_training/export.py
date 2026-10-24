@@ -34,31 +34,6 @@ logger = getLogger(__name__)
 _CONFIG_NAME = "tiktoken.json"
 
 
-def _bytes_to_unicode() -> dict[int, str]:
-    """GPT-2 byte-to-character map used by the ``ByteLevel`` pre-tokenizer."""
-
-    printable = list(range(ord("!"), ord("~") + 1)) + list(range(ord("¡"), ord("¬") + 1))
-    printable += list(range(ord("®"), ord("ÿ") + 1))
-    characters = printable[:]
-    offset = 0
-    for byte in range(256):
-        if byte not in printable:
-            printable.append(byte)
-            characters.append(256 + offset)
-            offset += 1
-    return dict(zip(printable, map(chr, characters)))
-
-
-def _split_pattern(tokenizer_config: dict[str, Any]) -> str:
-    """The ``Split`` regex of the saved pre-tokenizer (the model's own, not the current constant)."""
-
-    pre_tokenizer = tokenizer_config["pre_tokenizer"]
-    for step in pre_tokenizer.get("pretokenizers", [pre_tokenizer]):
-        if step["type"] == "Split":
-            return str(step["pattern"]["Regex"])
-    raise ValueError("tokenizer.json has no Split pre-tokenizer")
-
-
 class NFCEncoding(tiktoken.Encoding):
     """tiktoken encoding that NFC-normalizes text first, matching ``tokenizer.json``.
 
@@ -112,8 +87,33 @@ def export_tiktoken(model_dir: Path, name: str | None = None) -> Path:
     return rank_path
 
 
+def _bytes_to_unicode() -> dict[int, str]:
+    """GPT-2 byte-to-character map used by the ``ByteLevel`` pre-tokenizer."""
+
+    printable = list(range(ord("!"), ord("~") + 1)) + list(range(ord("¡"), ord("¬") + 1))
+    printable += list(range(ord("®"), ord("ÿ") + 1))
+    characters = printable[:]
+    offset = 0
+    for byte in range(256):
+        if byte not in printable:
+            printable.append(byte)
+            characters.append(256 + offset)
+            offset += 1
+    return dict(zip(printable, map(chr, characters)))
+
+
 def _rank(item: tuple[bytes, int]) -> int:
     return item[1]
+
+
+def _split_pattern(tokenizer_config: dict[str, Any]) -> str:
+    """The ``Split`` regex of the saved pre-tokenizer (the model's own, not the current constant)."""
+
+    pre_tokenizer = tokenizer_config["pre_tokenizer"]
+    for step in pre_tokenizer.get("pretokenizers", [pre_tokenizer]):
+        if step["type"] == "Split":
+            return str(step["pattern"]["Regex"])
+    raise ValueError("tokenizer.json has no Split pre-tokenizer")
 
 
 def load_tiktoken(model_dir: Path) -> NFCEncoding:
@@ -129,14 +129,6 @@ def load_tiktoken(model_dir: Path) -> NFCEncoding:
     )
 
 
-def tiktoken_mismatches(encoding: tiktoken.Encoding, tokenizer: Tokenizer, texts: list[str]) -> list[int]:
-    """Indices of the texts for which *encoding* and *tokenizer* produce different ids."""
-
-    expected = [e.ids for e in tokenizer.encode_batch_fast(texts, add_special_tokens=False)]
-    actual = encoding.encode_batch(texts, allowed_special="all")
-    return [index for index, (left, right) in enumerate(zip(expected, actual)) if left != right]
-
-
 def verify_tiktoken(encoding: tiktoken.Encoding, tokenizer: Tokenizer, texts: list[str]) -> None:
     """Raise unless *encoding* and *tokenizer* produce identical ids for every text."""
 
@@ -147,3 +139,11 @@ def verify_tiktoken(encoding: tiktoken.Encoding, tokenizer: Tokenizer, texts: li
             f"(first: document {mismatches[0]})"
         )
     logger.info("tiktoken export matches tokenizer.json on all %d documents", len(texts))
+
+
+def tiktoken_mismatches(encoding: tiktoken.Encoding, tokenizer: Tokenizer, texts: list[str]) -> list[int]:
+    """Indices of the texts for which *encoding* and *tokenizer* produce different ids."""
+
+    expected = [e.ids for e in tokenizer.encode_batch_fast(texts, add_special_tokens=False)]
+    actual = encoding.encode_batch(texts, allowed_special="all")
+    return [index for index, (left, right) in enumerate(zip(expected, actual)) if left != right]

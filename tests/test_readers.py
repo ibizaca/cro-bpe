@@ -28,7 +28,11 @@ from data_import.readers import (
 
 _WIKI_MARKUP = ("|", "{{", "}}", "{|", "|}", "[[", "]]", "<ref", "''")
 
-# ─────────────────────────────── Wikipedia ───────────────────────────────────
+_JSONL_ROWS = [
+    {"id": 1, "text": "Prvi dokument.", "u": "http://a.hr", "lang": ["hrv_Latn", "bos_Latn"]},
+    {"id": 2, "text": "   "},  # blank text is skipped
+    {"id": 3, "text": "Drugi dokument.", "u": "http://b.hr", "lang": "hr"},
+]
 
 
 @pytest.mark.parametrize(
@@ -67,17 +71,6 @@ Prvi spomen je iz 1094.<ref name="a" />
     assert text == "Zagreb je glavni i najveći grad Hrvatske.\n\nPovijest\nPrvi spomen je iz 1094."
 
 
-def _wiki_dump(path: Path, pages: list[tuple[str, str, str]]) -> Path:
-    ns = "http://www.mediawiki.org/xml/export-0.11/"
-    body = "".join(
-        f"<page><title>{title}</title><ns>{namespace}</ns><id>{i}</id>"
-        f"<revision><id>{100 + i}</id><text>{text}</text></revision></page>"
-        for i, (title, namespace, text) in enumerate(pages, start=1)
-    )
-    path.write_bytes(bz2.compress(f'<mediawiki xmlns="{ns}">{body}</mediawiki>'.encode()))
-    return path
-
-
 def test_read_wikimedia_keeps_articles_only(tmp_path: Path) -> None:
     dump = _wiki_dump(
         tmp_path / "wiki.xml.bz2",
@@ -93,15 +86,6 @@ def test_read_wikimedia_keeps_articles_only(tmp_path: Path) -> None:
         ("1", "Zagreb je glavni grad.", "https://hr.wikipedia.org/wiki/Zagreb"),
         ("4", "Himna.", "https://hr.wikipedia.org/wiki/Lijepa_naša"),
     ]
-
-
-# ─────────────────────────────── JSONL ───────────────────────────────────────
-
-_JSONL_ROWS = [
-    {"id": 1, "text": "Prvi dokument.", "u": "http://a.hr", "lang": ["hrv_Latn", "bos_Latn"]},
-    {"id": 2, "text": "   "},  # blank text is skipped
-    {"id": 3, "text": "Drugi dokument.", "u": "http://b.hr", "lang": "hr"},
-]
 
 
 @pytest.mark.parametrize("source_format", [SourceFormat.JSONL_GZ, SourceFormat.JSONL_ZST])
@@ -129,9 +113,6 @@ def test_read_jsonl_rejects_invalid_json(tmp_path: Path) -> None:
 def test_missing_source_file(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         list(stream_source(next(s for s in SOURCES if s.id == "cc-100-hr"), tmp_path, ReadReport()))
-
-
-# ─────────────────────────────── other formats ───────────────────────────────
 
 
 def test_read_xz_text(tmp_path: Path) -> None:
@@ -174,12 +155,6 @@ def test_read_macocu_reports_unparseable_files(tmp_path: Path) -> None:
     assert report.skipped_files == ["macocu.zip:b.xml"]
 
 
-def _add_member(archive: tarfile.TarFile, name: str, data: bytes) -> None:
-    member = tarfile.TarInfo(name)
-    member.size = len(data)
-    archive.addfile(member, io.BytesIO(data))
-
-
 def test_read_tei_reports_unparseable_files(tmp_path: Path) -> None:
     tei = (
         '<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body>'
@@ -207,3 +182,20 @@ def test_read_multieurlex_takes_croatian_only(tmp_path: Path) -> None:
         _add_member(archive, "data/other.jsonl", json.dumps(rows[0]).encode())
     docs = list(read_multieurlex_tar_gz(path, source_id="multi-eurlex-hr"))
     assert [(d.doc_id, d.text) for d in docs] == [("32010R0001", "Uredba")]
+
+
+def _wiki_dump(path: Path, pages: list[tuple[str, str, str]]) -> Path:
+    ns = "http://www.mediawiki.org/xml/export-0.11/"
+    body = "".join(
+        f"<page><title>{title}</title><ns>{namespace}</ns><id>{i}</id>"
+        f"<revision><id>{100 + i}</id><text>{text}</text></revision></page>"
+        for i, (title, namespace, text) in enumerate(pages, start=1)
+    )
+    path.write_bytes(bz2.compress(f'<mediawiki xmlns="{ns}">{body}</mediawiki>'.encode()))
+    return path
+
+
+def _add_member(archive: tarfile.TarFile, name: str, data: bytes) -> None:
+    member = tarfile.TarInfo(name)
+    member.size = len(data)
+    archive.addfile(member, io.BytesIO(data))

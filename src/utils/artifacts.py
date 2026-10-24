@@ -53,16 +53,6 @@ class Provenance(Artifact):
         )
 
 
-def _git(repository: Path, *arguments: str) -> str:
-    completed = subprocess.run(
-        ["git", "-C", str(repository), *arguments], capture_output=True, text=True, check=True, timeout=10
-    )
-    return completed.stdout.strip()
-
-
-# ─────────────────────────────── preprocessing ───────────────────────────────
-
-
 class ShardSidecar(Artifact):
     """``data/preprocessed/<source>/part-*.stats.json``: one shard's counts and the fingerprint it was built with."""
 
@@ -75,9 +65,6 @@ class SourceStats(Artifact):
 
     fingerprint: str = Field(description="Fingerprint over the source's shard fingerprints.")
     counts: dict[str, int]
-
-
-# ─────────────────────────────── feature engineering ─────────────────────────
 
 
 class SourceMixtureStats(Artifact):
@@ -106,9 +93,6 @@ class MixtureSummary(Artifact):
         return {source: stats.train_share for source, stats in self.sources.items()}
 
 
-# ─────────────────────────────── model training ──────────────────────────────
-
-
 class TrainingConfig(Artifact):
     """``data/models/cro-bpe-<vocab>/training_config.json``; written last, so it marks a complete model."""
 
@@ -118,3 +102,10 @@ class TrainingConfig(Artifact):
     corpus: MixtureSummary
     tracking_run_id: str | None = Field(description="Experiment-tracking run that trained the model.")
     provenance: Provenance
+
+
+def _git(repository: Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repository), *arguments], capture_output=True, text=True, check=True, timeout=10
+    )
+    return completed.stdout.strip()

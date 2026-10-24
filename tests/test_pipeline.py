@@ -31,31 +31,6 @@ from utils.tracking import NullTracker
 _SOURCES = {"hr-wikipedia": 300, "cc-100-hr": 900}
 
 
-def _import_sources(data_root: Path) -> None:
-    """Imported sources as data import leaves them; every other catalog source is blocked."""
-
-    offset = 0
-    for entry in SOURCES:
-        if entry.id not in _SOURCES:
-            save_manifest(SourceManifest(source_id=entry.id, status="blocked"), data_root)
-            continue
-        texts = synthetic_corpus(_SOURCES[entry.id], seed=offset)
-        offset += 1
-        writer = ParquetShardWriter(DataPaths(data_root).raw_parquet(entry.id), max_rows=250)
-        for i, text in enumerate(texts):
-            writer.write(DocumentRecord(text=text, source_id=entry.id, doc_id=str(i)))
-        shards = writer.close()
-        save_manifest(
-            SourceManifest(
-                source_id=entry.id,
-                status="complete",
-                documents=len(texts),
-                output_files=shards,
-            ),
-            data_root,
-        )
-
-
 def test_pipeline_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     paths = DataPaths(tmp_path)
     _import_sources(tmp_path)
@@ -121,3 +96,28 @@ def test_pipeline_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     }
     assert comparison.tiktoken_mismatches == {"timed (tiktoken)": 0}
     assert set(EvaluationReport.load(model_dirs[0] / "evaluation.json").tokenizers) == set(rows)
+
+
+def _import_sources(data_root: Path) -> None:
+    """Imported sources as data import leaves them; every other catalog source is blocked."""
+
+    offset = 0
+    for entry in SOURCES:
+        if entry.id not in _SOURCES:
+            save_manifest(SourceManifest(source_id=entry.id, status="blocked"), data_root)
+            continue
+        texts = synthetic_corpus(_SOURCES[entry.id], seed=offset)
+        offset += 1
+        writer = ParquetShardWriter(DataPaths(data_root).raw_parquet(entry.id), max_rows=250)
+        for i, text in enumerate(texts):
+            writer.write(DocumentRecord(text=text, source_id=entry.id, doc_id=str(i)))
+        shards = writer.close()
+        save_manifest(
+            SourceManifest(
+                source_id=entry.id,
+                status="complete",
+                documents=len(texts),
+                output_files=shards,
+            ),
+            data_root,
+        )

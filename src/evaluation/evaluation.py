@@ -144,179 +144,10 @@ class EvaluationSettings(BaseModel):
     data_root: Path = Field(default_factory=default_data_root, description="Root of the data/ directory.")
 
 
-def cpu_model() -> str:
-    cpuinfo = Path("/proc/cpuinfo")
-    if cpuinfo.is_file():
-        for line in cpuinfo.read_text(encoding="utf-8").splitlines():
-            if line.startswith("model name"):
-                return line.split(":", 1)[1].strip()
-    return platform.processor() or platform.machine()
-
-
 @dataclass(frozen=True)
 class BaselineFile:
     path: Path  # a tokenizer.json that loads
     revision: str | None  # commit of the downloaded files
-
-
-def snapshot_revision(path: Path) -> str | None:
-    """Commit hash of a file in the Hub cache (``.../snapshots/<sha>/<file>``)."""
-
-    return path.parent.name if path.parent.parent.name == "snapshots" else None
-
-
-def _wordpiece_tokenizer(repository: str, cache_dir: Path) -> Path:
-    """``tokenizer.json`` built from a BERT-style ``vocab.txt``, saved next to the Hub cache."""
-
-    vocab = Path(hf_hub_download(repository, "vocab.txt", cache_dir=cache_dir))
-    config = json.loads(Path(hf_hub_download(repository, "tokenizer_config.json", cache_dir=cache_dir)).read_text())
-    lowercase = config.get("do_lower_case", True)  # transformers' BertTokenizer default
-    tokenizer = BertWordPieceTokenizer(str(vocab), lowercase=lowercase, strip_accents=config.get("strip_accents"))
-    path = cache_dir / "wordpiece" / repository.replace("/", "--") / vocab.parent.name / "tokenizer.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tokenizer.save(str(path))
-    return path
-
-
-def download_baselines(baselines: dict[str, str], cache_dir: Path) -> dict[str, BaselineFile]:
-    """``tokenizer.json`` of each baseline, cached in *cache_dir* (under ``data/``, not ``~/.cache``).
-
-    A repository without ``tokenizer.json`` but with a WordPiece ``vocab.txt`` (BERT-style
-    encoders) gets one built from it.
-    """
-
-    files = {}
-    for name, repository in baselines.items():
-        try:
-            try:
-                path = Path(hf_hub_download(repository, "tokenizer.json", cache_dir=cache_dir))
-                revision = snapshot_revision(path)
-            except EntryNotFoundError:
-                path = _wordpiece_tokenizer(repository, cache_dir)
-                revision = path.parent.name
-                logger.info("Built %s tokenizer.json from vocab.txt of %s", name, repository)
-            Tokenizer.from_file(str(path))
-            files[name] = BaselineFile(path, revision)
-        except Exception as error:  # network, auth or missing-file errors must not fail the stage
-            logger.warning("Skipping baseline %s (%s): %s", name, repository, error)
-    return files
-
-
-def model_directories(vocab_sizes: list[int], data_root: Path) -> list[Path]:
-    model_dirs = []
-    for vocab_size in vocab_sizes:
-        model_dir = DataPaths(data_root).model_dir(vocab_size)
-        # training_config.json is written last, after the export check, so it marks a complete model.
-        if (model_dir / "tokenizer.json").is_file() and (model_dir / "training_config.json").is_file():
-            model_dirs.append(model_dir)
-        else:
-            logger.warning("Skipping %s: no complete model found; run model training first", model_dir.name)
-    if not model_dirs:
-        raise MissingInputError(f"No trained model for vocabulary sizes {vocab_sizes}; run model training first")
-    return model_dirs
-
-
-def check_tiktoken(model_dir: Path, tokenizer: Tokenizer, texts: list[str]) -> None:
-    """Export *model_dir* to tiktoken if needed, then require identical ids on *texts*."""
-
-    if not (model_dir / "tiktoken.json").is_file():
-        logger.info("Exporting %s to tiktoken", model_dir.name)
-        export_tiktoken(model_dir)
-    verify_tiktoken(load_tiktoken(model_dir), tokenizer, texts)
-
-
-def _training_run_id(model_dir: Path, tracker: Tracker) -> str | None:
-    """Tracking run that trained *model_dir*: the recorded id, else the latest run with its name."""
-
-    return TrainingConfig.load(model_dir / "training_config.json").tracking_run_id or tracker.find_run(model_dir.name)
-
-
-def _speed_summary(row: SummaryRow) -> str:
-    if row.encode_batch_tokens_per_second is None:
-        return "not benchmarked"
-    throughput = ", ".join(
-        f"{threads} threads {value:.1f} MB/s" for threads, value in row.encode_batch_megabytes_per_second.items()
-    )
-    return (
-        f"encode {throughput} ({row.encode_batch_tokens_per_second / 1e6:.2f}M tokens/s at most threads, "
-        f"spread {100 * (row.encode_batch_spread or 0):.0f}%), "
-        f"sequential {row.encode_sequential_megabytes_per_second or 0:.1f} MB/s | "
-        f"decode {(row.decode_batch_tokens_per_second or 0) / 1e6:.2f}M tokens/s"
-    )
-
-
-def log_summary(summary: dict[str, SummaryRow]) -> None:
-    for name, row in summary.items():
-        logger.info(
-            "[%s] %.3f bytes/token (mixture %s), %.3f tokens/word (by rank %s), Rényi %.3f, %.1f%% vocab used, "
-            "%d round-trip failures | %s",
-            name,
-            row.bytes_per_token,
-            "n/a" if row.mixture_bytes_per_token is None else f"{row.mixture_bytes_per_token:.3f}",
-            row.tokens_per_word,
-            " / ".join(f"{value:.2f}" for value in row.tokens_per_word_by_rank.values()),
-            row.renyi_efficiency,
-            100 * row.used_fraction,
-            row.roundtrip_failures,
-            _speed_summary(row),
-        )
-
-
-def flatten(values: dict[str, Any], prefix: str) -> dict[str, float]:
-    flat: dict[str, float] = {}
-    for key, value in values.items():
-        if isinstance(value, dict):
-            flat.update(flatten(value, f"{prefix}.{key}"))
-        elif isinstance(value, (int, float)) and not isinstance(value, bool):
-            flat[f"{prefix}.{key}"] = value
-    return flat
-
-
-def _builtin_encodings(
-    settings: EvaluationSettings, baselines: dict[str, Tokenizer], texts: list[str]
-) -> tuple[dict[str, str], dict[str, int]]:
-    """tiktoken encodings whose mirror loaded, by name, and the documents on which each differs from its mirror."""
-
-    encodings, mismatches = {}, {}
-    for name, encoding_name in settings.tiktoken_builtin.items():
-        mirror = name.removesuffix(TIKTOKEN_SUFFIX)
-        if mirror not in baselines:
-            logger.warning("Skipping %s: baseline %s is not available", name, mirror)
-            continue
-        encoding = load_builtin_encoding(encoding_name, settings.data_root)
-        mismatches[name] = len(tiktoken_mismatches(encoding, baselines[mirror], texts))
-        if mismatches[name]:
-            logger.warning(
-                "%s differs from its mirror %s on %d of %d holdout documents",
-                encoding_name,
-                settings.baselines[mirror],
-                mismatches[name],
-                len(texts),
-            )
-        else:
-            logger.info("%s matches its mirror %s on all %d documents", encoding_name, mirror, len(texts))
-        encodings[name] = encoding_name
-    return encodings, mismatches
-
-
-def _tracked_metrics(results: dict[str, TokenizerResult], model_name: str) -> dict[str, float]:
-    metrics: dict[str, float] = {}
-    for name, result in results.items():
-        data = result.model_dump()
-        if name == model_name + TIKTOKEN_SUFFIX:
-            metrics.update(flatten(data["throughput"], "eval.tiktoken"))
-            continue
-        # MLflow metric names cannot contain parentheses.
-        prefix = "eval" if name == model_name else f"baseline.{name.replace(TIKTOKEN_SUFFIX, '.tiktoken')}"
-        quality = (
-            data["quality"]
-            if name == model_name
-            else {key: value for key, value in data["quality"].items() if key in (ALL_SOURCES, MIXTURE)}
-        )
-        metrics.update(flatten(quality, prefix))
-        for section in ("vocabulary", "fertility", "throughput"):
-            metrics.update(flatten(data[section] or {}, prefix if section == "vocabulary" else f"{prefix}.{section}"))
-    return metrics
 
 
 def run(settings: EvaluationSettings | None = None, tracker: Tracker | None = None) -> dict[str, SummaryRow]:
@@ -437,6 +268,175 @@ def run(settings: EvaluationSettings | None = None, tracker: Tracker | None = No
         logger.info("Evaluation written to %s", evaluation_path)
     logger.info("Comparison written to %s", comparison_path)
     return summary
+
+
+def model_directories(vocab_sizes: list[int], data_root: Path) -> list[Path]:
+    model_dirs = []
+    for vocab_size in vocab_sizes:
+        model_dir = DataPaths(data_root).model_dir(vocab_size)
+        # training_config.json is written last, after the export check, so it marks a complete model.
+        if (model_dir / "tokenizer.json").is_file() and (model_dir / "training_config.json").is_file():
+            model_dirs.append(model_dir)
+        else:
+            logger.warning("Skipping %s: no complete model found; run model training first", model_dir.name)
+    if not model_dirs:
+        raise MissingInputError(f"No trained model for vocabulary sizes {vocab_sizes}; run model training first")
+    return model_dirs
+
+
+def check_tiktoken(model_dir: Path, tokenizer: Tokenizer, texts: list[str]) -> None:
+    """Export *model_dir* to tiktoken if needed, then require identical ids on *texts*."""
+
+    if not (model_dir / "tiktoken.json").is_file():
+        logger.info("Exporting %s to tiktoken", model_dir.name)
+        export_tiktoken(model_dir)
+    verify_tiktoken(load_tiktoken(model_dir), tokenizer, texts)
+
+
+def download_baselines(baselines: dict[str, str], cache_dir: Path) -> dict[str, BaselineFile]:
+    """``tokenizer.json`` of each baseline, cached in *cache_dir* (under ``data/``, not ``~/.cache``).
+
+    A repository without ``tokenizer.json`` but with a WordPiece ``vocab.txt`` (BERT-style
+    encoders) gets one built from it.
+    """
+
+    files = {}
+    for name, repository in baselines.items():
+        try:
+            try:
+                path = Path(hf_hub_download(repository, "tokenizer.json", cache_dir=cache_dir))
+                revision = snapshot_revision(path)
+            except EntryNotFoundError:
+                path = _wordpiece_tokenizer(repository, cache_dir)
+                revision = path.parent.name
+                logger.info("Built %s tokenizer.json from vocab.txt of %s", name, repository)
+            Tokenizer.from_file(str(path))
+            files[name] = BaselineFile(path, revision)
+        except Exception as error:  # network, auth or missing-file errors must not fail the stage
+            logger.warning("Skipping baseline %s (%s): %s", name, repository, error)
+    return files
+
+
+def snapshot_revision(path: Path) -> str | None:
+    """Commit hash of a file in the Hub cache (``.../snapshots/<sha>/<file>``)."""
+
+    return path.parent.name if path.parent.parent.name == "snapshots" else None
+
+
+def _wordpiece_tokenizer(repository: str, cache_dir: Path) -> Path:
+    """``tokenizer.json`` built from a BERT-style ``vocab.txt``, saved next to the Hub cache."""
+
+    vocab = Path(hf_hub_download(repository, "vocab.txt", cache_dir=cache_dir))
+    config = json.loads(Path(hf_hub_download(repository, "tokenizer_config.json", cache_dir=cache_dir)).read_text())
+    lowercase = config.get("do_lower_case", True)  # transformers' BertTokenizer default
+    tokenizer = BertWordPieceTokenizer(str(vocab), lowercase=lowercase, strip_accents=config.get("strip_accents"))
+    path = cache_dir / "wordpiece" / repository.replace("/", "--") / vocab.parent.name / "tokenizer.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tokenizer.save(str(path))
+    return path
+
+
+def _builtin_encodings(
+    settings: EvaluationSettings, baselines: dict[str, Tokenizer], texts: list[str]
+) -> tuple[dict[str, str], dict[str, int]]:
+    """tiktoken encodings whose mirror loaded, by name, and the documents on which each differs from its mirror."""
+
+    encodings, mismatches = {}, {}
+    for name, encoding_name in settings.tiktoken_builtin.items():
+        mirror = name.removesuffix(TIKTOKEN_SUFFIX)
+        if mirror not in baselines:
+            logger.warning("Skipping %s: baseline %s is not available", name, mirror)
+            continue
+        encoding = load_builtin_encoding(encoding_name, settings.data_root)
+        mismatches[name] = len(tiktoken_mismatches(encoding, baselines[mirror], texts))
+        if mismatches[name]:
+            logger.warning(
+                "%s differs from its mirror %s on %d of %d holdout documents",
+                encoding_name,
+                settings.baselines[mirror],
+                mismatches[name],
+                len(texts),
+            )
+        else:
+            logger.info("%s matches its mirror %s on all %d documents", encoding_name, mirror, len(texts))
+        encodings[name] = encoding_name
+    return encodings, mismatches
+
+
+def log_summary(summary: dict[str, SummaryRow]) -> None:
+    for name, row in summary.items():
+        logger.info(
+            "[%s] %.3f bytes/token (mixture %s), %.3f tokens/word (by rank %s), Rényi %.3f, %.1f%% vocab used, "
+            "%d round-trip failures | %s",
+            name,
+            row.bytes_per_token,
+            "n/a" if row.mixture_bytes_per_token is None else f"{row.mixture_bytes_per_token:.3f}",
+            row.tokens_per_word,
+            " / ".join(f"{value:.2f}" for value in row.tokens_per_word_by_rank.values()),
+            row.renyi_efficiency,
+            100 * row.used_fraction,
+            row.roundtrip_failures,
+            _speed_summary(row),
+        )
+
+
+def _speed_summary(row: SummaryRow) -> str:
+    if row.encode_batch_tokens_per_second is None:
+        return "not benchmarked"
+    throughput = ", ".join(
+        f"{threads} threads {value:.1f} MB/s" for threads, value in row.encode_batch_megabytes_per_second.items()
+    )
+    return (
+        f"encode {throughput} ({row.encode_batch_tokens_per_second / 1e6:.2f}M tokens/s at most threads, "
+        f"spread {100 * (row.encode_batch_spread or 0):.0f}%), "
+        f"sequential {row.encode_sequential_megabytes_per_second or 0:.1f} MB/s | "
+        f"decode {(row.decode_batch_tokens_per_second or 0) / 1e6:.2f}M tokens/s"
+    )
+
+
+def cpu_model() -> str:
+    cpuinfo = Path("/proc/cpuinfo")
+    if cpuinfo.is_file():
+        for line in cpuinfo.read_text(encoding="utf-8").splitlines():
+            if line.startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    return platform.processor() or platform.machine()
+
+
+def _training_run_id(model_dir: Path, tracker: Tracker) -> str | None:
+    """Tracking run that trained *model_dir*: the recorded id, else the latest run with its name."""
+
+    return TrainingConfig.load(model_dir / "training_config.json").tracking_run_id or tracker.find_run(model_dir.name)
+
+
+def _tracked_metrics(results: dict[str, TokenizerResult], model_name: str) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    for name, result in results.items():
+        data = result.model_dump()
+        if name == model_name + TIKTOKEN_SUFFIX:
+            metrics.update(flatten(data["throughput"], "eval.tiktoken"))
+            continue
+        # MLflow metric names cannot contain parentheses.
+        prefix = "eval" if name == model_name else f"baseline.{name.replace(TIKTOKEN_SUFFIX, '.tiktoken')}"
+        quality = (
+            data["quality"]
+            if name == model_name
+            else {key: value for key, value in data["quality"].items() if key in (ALL_SOURCES, MIXTURE)}
+        )
+        metrics.update(flatten(quality, prefix))
+        for section in ("vocabulary", "fertility", "throughput"):
+            metrics.update(flatten(data[section] or {}, prefix if section == "vocabulary" else f"{prefix}.{section}"))
+    return metrics
+
+
+def flatten(values: dict[str, Any], prefix: str) -> dict[str, float]:
+    flat: dict[str, float] = {}
+    for key, value in values.items():
+        if isinstance(value, dict):
+            flat.update(flatten(value, f"{prefix}.{key}"))
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            flat[f"{prefix}.{key}"] = value
+    return flat
 
 
 if __name__ == "__main__":

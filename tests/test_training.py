@@ -26,14 +26,17 @@ from utils.project import DataPaths
 from utils.tracking import NullTracker
 
 
-def _train(corpus: list[str], vocab_size: int) -> Tokenizer:
-    tokenizer = build_tokenizer()
-    tokenizer.train_from_iterator(corpus, trainer=build_trainer(vocab_size, 2, 24))
-    return tokenizer
+class _RecordingTracker(NullTracker):
+    def __init__(self) -> None:
+        self.runs: list[str] = []
+        self.metrics: list[dict[str, float]] = []
 
+    def run(self, name: str, run_id: str | None = None):  # type: ignore[override]
+        self.runs.append(name)
+        return super().run(name, run_id or f"run-{name}")
 
-def _model_config(tokenizer: Tokenizer) -> dict:
-    return json.loads(tokenizer.to_str())["model"]
+    def log_metrics(self, metrics: dict[str, float]) -> None:
+        self.metrics.append(metrics)
 
 
 def test_truncation_equals_training_the_smaller_size() -> None:
@@ -62,17 +65,6 @@ def test_invalid_vocab_sizes(sizes: list[int]) -> None:
         TrainingSettings(vocab_sizes=sizes)
 
 
-def _write_shards(directory: Path, sources: list[str], rows_per_shard: int, row_group_size: int) -> list[Path]:
-    directory.mkdir(parents=True, exist_ok=True)
-    paths = []
-    for index, source in enumerate(sources):
-        texts = [f"{source} dokument {i}" for i in range(rows_per_shard)]
-        path = directory / f"part-{index:05d}.parquet"
-        pq.write_table(pa.table({"text": texts, "source": [source] * len(texts)}), path, row_group_size=row_group_size)
-        paths.append(path)
-    return paths
-
-
 def test_export_check_covers_every_shard_and_the_holdout(tmp_path: Path) -> None:
     train = _write_shards(tmp_path / "train", ["wiki", "eurlex", "web", "web"], 1_000, 100)
     holdout = _write_shards(tmp_path / "holdout", ["wiki", "web"], 10, 100)
@@ -96,47 +88,6 @@ def test_export_name_is_independent_of_the_directory(tmp_path: Path, tiny_model_
     export_tiktoken(staging, name="cro-bpe-32k")
     assert (staging / "cro-bpe-32k.tiktoken").is_file()
     assert json.loads((staging / "tiktoken.json").read_text())["name"] == "cro-bpe-32k"
-
-
-# ─────────────────────────────── full run ────────────────────────────────────
-
-
-@pytest.fixture
-def features_root(tmp_path: Path) -> Path:
-    features = tmp_path / "feature_engineered"
-    corpus = synthetic_corpus(1_500)
-    for split, texts in (("train", corpus[:1_400]), ("holdout", corpus[1_400:])):
-        (features / split).mkdir(parents=True)
-        pq.write_table(
-            pa.table({"text": texts, "source": ["web"] * len(texts)}), features / split / "part-00000.parquet"
-        )
-    train_bytes = sum(map(len, corpus[:1_400]))
-    MixtureSummary(
-        fingerprint="test",
-        settings={},
-        mixture_weights={"web": 1.0},
-        train_bytes=train_bytes,
-        sources={
-            "web": SourceMixtureStats(
-                documents=1_500, duplicates_removed=0, holdout_documents=100, available_bytes=train_bytes
-            )
-        },
-        provenance=Provenance.current(),
-    ).save(DataPaths(tmp_path).mixture)
-    return tmp_path
-
-
-class _RecordingTracker(NullTracker):
-    def __init__(self) -> None:
-        self.runs: list[str] = []
-        self.metrics: list[dict[str, float]] = []
-
-    def run(self, name: str, run_id: str | None = None):  # type: ignore[override]
-        self.runs.append(name)
-        return super().run(name, run_id or f"run-{name}")
-
-    def log_metrics(self, metrics: dict[str, float]) -> None:
-        self.metrics.append(metrics)
 
 
 def test_run_trains_once_and_writes_complete_models(features_root: Path) -> None:
@@ -183,9 +134,6 @@ def test_evaluation_skips_models_without_training_config(tmp_path: Path, tiny_mo
         evaluation.model_directories([32_000], tmp_path)
 
 
-# ─────────────────────────────── mixture weighting ───────────────────────────
-
-
 def test_mixture_aggregate_weights_sources_by_training_share(tiny_tokenizer: Tokenizer) -> None:
     texts = ["Šuma, žaba, džep, ljubav."] * 10 + ["Emoji 😀 i kineski 中文."]
     sources = ["hr"] * 10 + ["web"]
@@ -197,3 +145,49 @@ def test_mixture_aggregate_weights_sources_by_training_share(tiny_tokenizer: Tok
     assert quality["all"].bytes_per_token != pytest.approx(expected)  # the holdout sum is dominated by "hr"
     only_hr = quality_metrics(tiny_tokenizer, texts, sources, weights={"hr": 1.0, "web": 0.0})
     assert only_hr[MIXTURE].bytes_per_token == pytest.approx(hr.bytes_per_token)
+
+
+def _train(corpus: list[str], vocab_size: int) -> Tokenizer:
+    tokenizer = build_tokenizer()
+    tokenizer.train_from_iterator(corpus, trainer=build_trainer(vocab_size, 2, 24))
+    return tokenizer
+
+
+def _model_config(tokenizer: Tokenizer) -> dict:
+    return json.loads(tokenizer.to_str())["model"]
+
+
+def _write_shards(directory: Path, sources: list[str], rows_per_shard: int, row_group_size: int) -> list[Path]:
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for index, source in enumerate(sources):
+        texts = [f"{source} dokument {i}" for i in range(rows_per_shard)]
+        path = directory / f"part-{index:05d}.parquet"
+        pq.write_table(pa.table({"text": texts, "source": [source] * len(texts)}), path, row_group_size=row_group_size)
+        paths.append(path)
+    return paths
+
+
+@pytest.fixture
+def features_root(tmp_path: Path) -> Path:
+    features = tmp_path / "feature_engineered"
+    corpus = synthetic_corpus(1_500)
+    for split, texts in (("train", corpus[:1_400]), ("holdout", corpus[1_400:])):
+        (features / split).mkdir(parents=True)
+        pq.write_table(
+            pa.table({"text": texts, "source": ["web"] * len(texts)}), features / split / "part-00000.parquet"
+        )
+    train_bytes = sum(map(len, corpus[:1_400]))
+    MixtureSummary(
+        fingerprint="test",
+        settings={},
+        mixture_weights={"web": 1.0},
+        train_bytes=train_bytes,
+        sources={
+            "web": SourceMixtureStats(
+                documents=1_500, duplicates_removed=0, holdout_documents=100, available_bytes=train_bytes
+            )
+        },
+        provenance=Provenance.current(),
+    ).save(DataPaths(tmp_path).mixture)
+    return tmp_path

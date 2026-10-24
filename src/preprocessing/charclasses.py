@@ -29,6 +29,16 @@ NORMALIZATION_CHARS = (
 _LATIN_RANGES = [(0x41, 0x5A), (0x61, 0x7A), (0xC0, 0x24F), (0x1E00, 0x1EFF)]
 
 
+def classify(text: str) -> np.ndarray:
+    """Class bit flags for every code point of *text*."""
+
+    return _TABLE[np.frombuffer(text.encode("utf-32-le", "surrogatepass"), dtype=np.uint32)]
+
+
+def count(flags: np.ndarray, character_class: np.uint8) -> int:
+    return int(np.count_nonzero(flags & character_class))
+
+
 def _build_table() -> np.ndarray:
     table = np.zeros(0x110000, dtype=np.uint8)
     for code_point in range(0x110000):
@@ -48,13 +58,3 @@ def _build_table() -> np.ndarray:
 
 
 _TABLE = _build_table()
-
-
-def classify(text: str) -> np.ndarray:
-    """Class bit flags for every code point of *text*."""
-
-    return _TABLE[np.frombuffer(text.encode("utf-32-le", "surrogatepass"), dtype=np.uint32)]
-
-
-def count(flags: np.ndarray, character_class: np.uint8) -> int:
-    return int(np.count_nonzero(flags & character_class))

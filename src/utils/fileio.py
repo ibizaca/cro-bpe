@@ -12,6 +12,11 @@ from utils.errors import PipelineBusyError
 _LOCK_NAME = ".cro-bpe.lock"
 
 
+def atomic_write_text(path: Path, text: str) -> None:
+    with atomic_path(path) as temporary:
+        temporary.write_text(text, encoding="utf-8")
+
+
 @contextmanager
 def atomic_path(path: Path) -> Iterator[Path]:
     """Yield a temporary sibling of *path*; it replaces *path* only if the block finishes.
@@ -27,11 +32,6 @@ def atomic_path(path: Path) -> Iterator[Path]:
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
-
-
-def atomic_write_text(path: Path, text: str) -> None:
-    with atomic_path(path) as temporary:
-        temporary.write_text(text, encoding="utf-8")
 
 
 def sha256_of_file(path: Path, chunk_size: int = 1 << 20) -> str:

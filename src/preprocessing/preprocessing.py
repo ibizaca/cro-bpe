@@ -60,103 +60,6 @@ class PreprocessingSettings(BaseModel):
     data_root: Path = Field(default_factory=default_data_root, description="Root of the data/ directory.")
 
 
-def stage_fingerprint(settings: PreprocessingSettings) -> str:
-    """Everything except the input that determines a shard's output."""
-
-    return fingerprint(
-        {
-            "preprocessing": VERSION,
-            "cleaning": cleaning.VERSION,
-            "filters": filters.VERSION,
-            "charclasses": charclasses.VERSION,
-        },
-        settings.thresholds.model_dump(),
-        _WIKIPEDIA_SOURCE,
-        str(PREPROCESSED_SCHEMA),
-    )
-
-
-def shard_fingerprint(stage: str, input_path: Path) -> str:
-    return fingerprint(stage, file_signatures([input_path]))
-
-
-def completed_sources(data_root: Path) -> list[str]:
-    """Source ids whose import is complete, by the same check the data import stage uses."""
-
-    manifests = sorted(DataPaths(data_root).raw.glob("*/manifest.json"))
-    return [path.parent.name for path in manifests if is_complete(path.parent.name, data_root)]
-
-
-def _stats_path(shard_path: Path) -> Path:
-    return shard_path.with_suffix(".stats.json")
-
-
-def clean_document(text: str, source_id: str) -> str:
-    if source_id == _WIKIPEDIA_SOURCE:
-        text = clean_wikitext_residue(text)
-    return normalize_text(text)
-
-
-def _read_sidecar(output_path: Path) -> ShardSidecar | None:
-    """The sidecar of a finished shard, or ``None`` if the shard or sidecar is missing or unreadable."""
-
-    if not output_path.is_file() or not _stats_path(output_path).is_file():
-        return None
-    try:
-        return ShardSidecar.load(_stats_path(output_path))
-    except ValidationError:
-        return None
-
-
-def process_shard(
-    input_path: Path, output_path: Path, source_id: str, settings: PreprocessingSettings, shard_print: str
-) -> dict[str, int]:
-    """Clean, filter and hash one raw shard. Returns the shard's statistics."""
-
-    stats: Counter[str] = Counter()
-    parquet_file = pq.ParquetFile(input_path)
-    # The sidecar goes first and is rewritten last: a shard counts as finished only once its fingerprint is on disk.
-    _stats_path(output_path).unlink(missing_ok=True)
-
-    with (
-        atomic_path(output_path) as temporary_path,
-        pq.ParquetWriter(temporary_path, PREPROCESSED_SCHEMA, **WRITE_OPTIONS) as writer,
-    ):
-        for batch in parquet_file.iter_batches(batch_size=settings.batch_size, columns=["text", "id"]):
-            texts, ids, hashes, sizes = [], [], [], []
-            for raw_text, doc_id in zip(batch.column("text").to_pylist(), batch.column("id").to_pylist()):
-                stats["documents_in"] += 1
-                stats["bytes_in"] += len(raw_text.encode("utf-8"))
-                text = clean_document(raw_text, source_id)
-                reason = rejection_reason(text, settings.thresholds)
-                if reason is not None:
-                    stats[f"rejected_{reason}"] += 1
-                    continue
-                encoded = text.encode("utf-8")
-                texts.append(text)
-                ids.append(doc_id)
-                hashes.append(xxhash.xxh3_64_intdigest(encoded))
-                sizes.append(len(encoded))
-            if texts:
-                writer.write_table(
-                    pa.Table.from_arrays(
-                        [
-                            pa.array(texts, type=pa.large_string()),
-                            pa.array([source_id] * len(texts), type=pa.string()),
-                            pa.array(ids, type=pa.string()),
-                            pa.array(hashes, type=pa.uint64()),
-                            pa.array(sizes, type=pa.int64()),
-                        ],
-                        schema=PREPROCESSED_SCHEMA,
-                    )
-                )
-                stats["documents_out"] += len(texts)
-                stats["bytes_out"] += sum(sizes)
-
-    ShardSidecar(fingerprint=shard_print, counts=dict(stats)).save(_stats_path(output_path))
-    return dict(stats)
-
-
 def run(settings: PreprocessingSettings | None = None) -> dict[str, dict[str, int]]:
     """Preprocess every completed source; returns the per-source statistics."""
 
@@ -223,6 +126,103 @@ def run(settings: PreprocessingSettings | None = None) -> dict[str, dict[str, in
             rejections,
         )
     return {source_id: dict(stats) for source_id, stats in source_stats.items()}
+
+
+def stage_fingerprint(settings: PreprocessingSettings) -> str:
+    """Everything except the input that determines a shard's output."""
+
+    return fingerprint(
+        {
+            "preprocessing": VERSION,
+            "cleaning": cleaning.VERSION,
+            "filters": filters.VERSION,
+            "charclasses": charclasses.VERSION,
+        },
+        settings.thresholds.model_dump(),
+        _WIKIPEDIA_SOURCE,
+        str(PREPROCESSED_SCHEMA),
+    )
+
+
+def completed_sources(data_root: Path) -> list[str]:
+    """Source ids whose import is complete, by the same check the data import stage uses."""
+
+    manifests = sorted(DataPaths(data_root).raw.glob("*/manifest.json"))
+    return [path.parent.name for path in manifests if is_complete(path.parent.name, data_root)]
+
+
+def _stats_path(shard_path: Path) -> Path:
+    return shard_path.with_suffix(".stats.json")
+
+
+def shard_fingerprint(stage: str, input_path: Path) -> str:
+    return fingerprint(stage, file_signatures([input_path]))
+
+
+def _read_sidecar(output_path: Path) -> ShardSidecar | None:
+    """The sidecar of a finished shard, or ``None`` if the shard or sidecar is missing or unreadable."""
+
+    if not output_path.is_file() or not _stats_path(output_path).is_file():
+        return None
+    try:
+        return ShardSidecar.load(_stats_path(output_path))
+    except ValidationError:
+        return None
+
+
+def process_shard(
+    input_path: Path, output_path: Path, source_id: str, settings: PreprocessingSettings, shard_print: str
+) -> dict[str, int]:
+    """Clean, filter and hash one raw shard. Returns the shard's statistics."""
+
+    stats: Counter[str] = Counter()
+    parquet_file = pq.ParquetFile(input_path)
+    # The sidecar goes first and is rewritten last: a shard counts as finished only once its fingerprint is on disk.
+    _stats_path(output_path).unlink(missing_ok=True)
+
+    with (
+        atomic_path(output_path) as temporary_path,
+        pq.ParquetWriter(temporary_path, PREPROCESSED_SCHEMA, **WRITE_OPTIONS) as writer,
+    ):
+        for batch in parquet_file.iter_batches(batch_size=settings.batch_size, columns=["text", "id"]):
+            texts, ids, hashes, sizes = [], [], [], []
+            for raw_text, doc_id in zip(batch.column("text").to_pylist(), batch.column("id").to_pylist()):
+                stats["documents_in"] += 1
+                stats["bytes_in"] += len(raw_text.encode("utf-8"))
+                text = clean_document(raw_text, source_id)
+                reason = rejection_reason(text, settings.thresholds)
+                if reason is not None:
+                    stats[f"rejected_{reason}"] += 1
+                    continue
+                encoded = text.encode("utf-8")
+                texts.append(text)
+                ids.append(doc_id)
+                hashes.append(xxhash.xxh3_64_intdigest(encoded))
+                sizes.append(len(encoded))
+            if texts:
+                writer.write_table(
+                    pa.Table.from_arrays(
+                        [
+                            pa.array(texts, type=pa.large_string()),
+                            pa.array([source_id] * len(texts), type=pa.string()),
+                            pa.array(ids, type=pa.string()),
+                            pa.array(hashes, type=pa.uint64()),
+                            pa.array(sizes, type=pa.int64()),
+                        ],
+                        schema=PREPROCESSED_SCHEMA,
+                    )
+                )
+                stats["documents_out"] += len(texts)
+                stats["bytes_out"] += sum(sizes)
+
+    ShardSidecar(fingerprint=shard_print, counts=dict(stats)).save(_stats_path(output_path))
+    return dict(stats)
+
+
+def clean_document(text: str, source_id: str) -> str:
+    if source_id == _WIKIPEDIA_SOURCE:
+        text = clean_wikitext_residue(text)
+    return normalize_text(text)
 
 
 if __name__ == "__main__":

@@ -77,11 +77,6 @@ class SourceManifest(_ManifestPart):
     skipped_files: list[str] = Field(default_factory=list, description="Archive members that failed to parse.")
 
 
-def load_manifest(source_id: str, data_root: Path) -> SourceManifest | None:
-    path = DataPaths(data_root).manifest(source_id)
-    return SourceManifest.load(path) if path.exists() else None
-
-
 def save_manifest(manifest: SourceManifest, data_root: Path) -> None:
     manifest.save(DataPaths(data_root).manifest(manifest.source_id))
 
@@ -103,3 +98,8 @@ def is_complete(source_id: str, data_root: Path, *, verify_hashes: bool = False)
         if verify_hashes and sha256_of_file(path) != output.sha256:
             return False
     return True
+
+
+def load_manifest(source_id: str, data_root: Path) -> SourceManifest | None:
+    path = DataPaths(data_root).manifest(source_id)
+    return SourceManifest.load(path) if path.exists() else None

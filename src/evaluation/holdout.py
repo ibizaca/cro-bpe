@@ -29,12 +29,6 @@ def load_holdout(data_root: Path) -> tuple[list[str], list[str]]:
     return texts, sources
 
 
-def word_key(word: str) -> str:
-    """Whitespace word without leading and trailing punctuation (case kept, as the tokenizer sees it)."""
-
-    return _EDGE_PUNCTUATION.sub("", word)
-
-
 def mixture_weights(data_root: Path) -> dict[str, float]:
     """Each source's share of training bytes, from ``mixture.json``."""
 
@@ -63,3 +57,9 @@ def training_word_ranks(data_root: Path, sample_bytes: int, max_rank: int) -> di
             if read_bytes >= per_file_bytes:
                 break
     return {word: rank for rank, (word, _) in enumerate(counts.most_common(max_rank))}
+
+
+def word_key(word: str) -> str:
+    """Whitespace word without leading and trailing punctuation (case kept, as the tokenizer sees it)."""
+
+    return _EDGE_PUNCTUATION.sub("", word)

@@ -25,53 +25,6 @@ _SHARED = "Ovaj dokument postoji u oba izvora i mora ostati samo jednom u korpus
 _SYLLABLES = ["ka", "ri", "jel", "no", "ža", "šu", "ma", "vi", "ći", "dra", "go", "sti", "lje", "nje", "đu"]
 
 
-def _words(rng: random.Random, count: int) -> list[str]:
-    return ["".join(rng.choices(_SYLLABLES, k=rng.randint(2, 4))) for _ in range(count)]
-
-
-def _texts(source_id: str, count: int) -> list[str]:
-    """Distinct 11-word documents (not near-duplicates of each other), the same for the same source id."""
-
-    rng = random.Random(source_id)
-    return [" ".join(_words(rng, 11)) + "." for _ in range(count)]
-
-
-def _raw_source(data_root: Path, source_id: str, texts: list[str], max_rows: int = 40) -> None:
-    writer = ParquetShardWriter(DataPaths(data_root).raw_parquet(source_id), max_rows=max_rows)
-    for i, text in enumerate(texts):
-        writer.write(DocumentRecord(text=text, source_id=source_id, doc_id=str(i)))
-    shards = writer.close()
-    save_manifest(
-        SourceManifest(
-            source_id=source_id,
-            status="complete",
-            documents=len(texts),
-            output_files=shards,
-        ),
-        data_root,
-    )
-
-
-@pytest.fixture
-def data_root(tmp_path: Path) -> Path:
-    _raw_source(tmp_path, "hr-wikipedia", [*_texts("wiki", 100), _SHARED, "prekratko"])
-    _raw_source(tmp_path, "cc-100-hr", [*_texts("cc", 300), _SHARED])
-    return tmp_path
-
-
-def _preprocess(data_root: Path, **thresholds: float) -> dict[str, dict]:
-    settings = PreprocessingSettings(workers=1, data_root=data_root, thresholds=QualityThresholds(**thresholds))
-    return preprocessing.run(settings)
-
-
-def _sidecar_mtimes(data_root: Path) -> dict[str, int]:
-    root = DataPaths(data_root).preprocessed
-    return {str(path.relative_to(root)): path.stat().st_mtime_ns for path in sorted(root.glob("*/*.stats.json"))}
-
-
-# ─────────────────────────────── preprocessing ───────────────────────────────
-
-
 def test_preprocessing_cleans_filters_and_counts(data_root: Path) -> None:
     stats = _preprocess(data_root)
     assert stats["hr-wikipedia"]["documents_in"] == 102
@@ -135,9 +88,6 @@ def test_sidecar_without_fingerprint_is_rebuilt(data_root: Path) -> None:
     assert ShardSidecar.load(sidecar).fingerprint
 
 
-# ─────────────────────────────── allocate_budget ─────────────────────────────
-
-
 def test_budget_follows_weights_when_nothing_saturates(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mixture, "MIXTURE_WEIGHTS", {"a": 0.25, "b": 0.75})
     fractions = allocate_budget({"a": 1_000, "b": 1_000}, target_bytes=400)
@@ -161,21 +111,6 @@ def test_unweighted_and_empty_sources_get_nothing(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(mixture, "MIXTURE_WEIGHTS", {"a": 1.0, "empty": 1.0})
     fractions = allocate_budget({"a": 1_000, "empty": 0, "unknown": 1_000}, target_bytes=500)
     assert fractions == pytest.approx({"a": 0.5, "empty": 0.0, "unknown": 0.0})
-
-
-# ─────────────────────────────── feature engineering ─────────────────────────
-
-
-def _features(data_root: Path, **settings: float) -> MixtureSummary:
-    return feature_engineering.run(FeatureEngineeringSettings(data_root=data_root, **settings))
-
-
-def _split_texts(data_root: Path, split: str) -> list[tuple[str, str]]:
-    rows = []
-    for path in sorted((DataPaths(data_root).features / split).glob("part-*.parquet")):
-        table = pq.read_table(path)
-        rows += list(zip(table.column("text").to_pylist(), table.column("source").to_pylist()))
-    return rows
 
 
 def test_feature_engineering_dedups_by_priority_and_splits(data_root: Path) -> None:
@@ -213,16 +148,6 @@ def test_feature_engineering_skips_unchanged_and_rebuilds_on_changes(
     # So do the preprocessed inputs.
     _preprocess(data_root, min_words=12)
     assert _features(data_root, target_train_bytes=10_000).fingerprint != rebuilt.fingerprint
-
-
-def _near_copy_sources(data_root: Path) -> str:
-    """A 300-word document in hr-wikipedia and a copy with one word changed in cc-100-hr; returns the original."""
-
-    original = _words(random.Random("long"), 300)
-    edited = [*original[:150], "promijenjeno", *original[151:]]
-    _raw_source(data_root, "hr-wikipedia", [*_texts("wiki", 100), " ".join(original)])
-    _raw_source(data_root, "cc-100-hr", [*_texts("cc", 300), " ".join(edited)])
-    return " ".join(original)
 
 
 def test_near_duplicate_in_lower_priority_source_is_removed(tmp_path: Path) -> None:
@@ -268,3 +193,69 @@ def test_outdated_mixture_json_is_rebuilt(data_root: Path) -> None:
     DataPaths(data_root).features.mkdir(parents=True)
     DataPaths(data_root).mixture.write_text(json.dumps({"settings": {}}))  # format written before fingerprints
     assert _features(data_root).fingerprint
+
+
+def _preprocess(data_root: Path, **thresholds: float) -> dict[str, dict]:
+    settings = PreprocessingSettings(workers=1, data_root=data_root, thresholds=QualityThresholds(**thresholds))
+    return preprocessing.run(settings)
+
+
+@pytest.fixture
+def data_root(tmp_path: Path) -> Path:
+    _raw_source(tmp_path, "hr-wikipedia", [*_texts("wiki", 100), _SHARED, "prekratko"])
+    _raw_source(tmp_path, "cc-100-hr", [*_texts("cc", 300), _SHARED])
+    return tmp_path
+
+
+def _raw_source(data_root: Path, source_id: str, texts: list[str], max_rows: int = 40) -> None:
+    writer = ParquetShardWriter(DataPaths(data_root).raw_parquet(source_id), max_rows=max_rows)
+    for i, text in enumerate(texts):
+        writer.write(DocumentRecord(text=text, source_id=source_id, doc_id=str(i)))
+    shards = writer.close()
+    save_manifest(
+        SourceManifest(
+            source_id=source_id,
+            status="complete",
+            documents=len(texts),
+            output_files=shards,
+        ),
+        data_root,
+    )
+
+
+def _texts(source_id: str, count: int) -> list[str]:
+    """Distinct 11-word documents (not near-duplicates of each other), the same for the same source id."""
+
+    rng = random.Random(source_id)
+    return [" ".join(_words(rng, 11)) + "." for _ in range(count)]
+
+
+def _words(rng: random.Random, count: int) -> list[str]:
+    return ["".join(rng.choices(_SYLLABLES, k=rng.randint(2, 4))) for _ in range(count)]
+
+
+def _sidecar_mtimes(data_root: Path) -> dict[str, int]:
+    root = DataPaths(data_root).preprocessed
+    return {str(path.relative_to(root)): path.stat().st_mtime_ns for path in sorted(root.glob("*/*.stats.json"))}
+
+
+def _features(data_root: Path, **settings: float) -> MixtureSummary:
+    return feature_engineering.run(FeatureEngineeringSettings(data_root=data_root, **settings))
+
+
+def _split_texts(data_root: Path, split: str) -> list[tuple[str, str]]:
+    rows = []
+    for path in sorted((DataPaths(data_root).features / split).glob("part-*.parquet")):
+        table = pq.read_table(path)
+        rows += list(zip(table.column("text").to_pylist(), table.column("source").to_pylist()))
+    return rows
+
+
+def _near_copy_sources(data_root: Path) -> str:
+    """A 300-word document in hr-wikipedia and a copy with one word changed in cc-100-hr; returns the original."""
+
+    original = _words(random.Random("long"), 300)
+    edited = [*original[:150], "promijenjeno", *original[151:]]
+    _raw_source(data_root, "hr-wikipedia", [*_texts("wiki", 100), " ".join(original)])
+    _raw_source(data_root, "cc-100-hr", [*_texts("cc", 300), " ".join(edited)])
+    return " ".join(original)

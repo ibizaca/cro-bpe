@@ -21,38 +21,33 @@ from utils.project import DataPaths
 _URL = "https://example.org/data/file.bin"
 _PAYLOAD = b"0123456789" * 100
 
-
-@pytest.fixture
-def serve(monkeypatch: pytest.MonkeyPatch) -> Callable[[Callable[[httpx.Request], httpx.Response]], list]:
-    """Route ``httpx.stream`` to *handler*; returns the list of received requests."""
-
-    monkeypatch.setattr(downloaders.time, "sleep", lambda seconds: None)
-
-    def install(handler: Callable[[httpx.Request], httpx.Response]) -> list[httpx.Request]:
-        requests: list[httpx.Request] = []
-
-        def respond(request: httpx.Request) -> httpx.Response:
-            requests.append(request)
-            return handler(request)
-
-        def stream(method: str, url: str, **kwargs):
-            return httpx.Client(transport=httpx.MockTransport(respond)).stream(method, url, **kwargs)
-
-        monkeypatch.setattr(downloaders.httpx, "stream", stream)
-        return requests
-
-    return install
+_WIKI = next(s for s in SOURCES if s.id == "hr-wikipedia")
 
 
-def _range_server(request: httpx.Request) -> httpx.Response:
-    start = int(request.headers["Range"].removeprefix("bytes=").rstrip("-")) if "Range" in request.headers else 0
-    if start >= len(_PAYLOAD):
-        return httpx.Response(416, headers={"Content-Range": f"bytes */{len(_PAYLOAD)}"})
-    status = 206 if start else 200
-    return httpx.Response(status, content=_PAYLOAD[start:], headers={"Content-Length": str(len(_PAYLOAD) - start)})
+class _FakeHubFilesystem:
+    """``HfFileSystem`` stand-in serving local Parquet files and counting the bytes read."""
 
+    def __init__(self, files: dict[str, Path], error: Exception | None = None) -> None:
+        self.files, self.error, self.bytes_read = files, error, 0
 
-# ─────────────────────────────── download_http ───────────────────────────────
+    def glob(self, pattern: str) -> list[str]:
+        if self.error is not None:
+            raise self.error
+        from fnmatch import fnmatch
+
+        return [name for name in self.files if fnmatch(name, pattern)]
+
+    def open(self, name: str, block_size: int):
+        handle = open(self.files[name], "rb")
+        original_read = handle.read
+
+        def read(size: int = -1) -> bytes:
+            data = original_read(size)
+            self.bytes_read += len(data)
+            return data
+
+        handle.read = read  # type: ignore[method-assign]
+        return handle
 
 
 def test_download_and_resume(tmp_path: Path, serve) -> None:
@@ -99,12 +94,6 @@ def test_416_for_an_oversized_part_file_restarts(tmp_path: Path, serve) -> None:
     assert len(requests) == 2
 
 
-# ─────────────────────────────── data_import ─────────────────────────────────
-
-
-_WIKI = next(s for s in SOURCES if s.id == "hr-wikipedia")
-
-
 def test_finished_download_without_manifest_record_is_adopted(tmp_path: Path, monkeypatch) -> None:
     """A crash between the rename and the manifest save must not discard the file."""
 
@@ -118,11 +107,6 @@ def test_finished_download_without_manifest_record_is_adopted(tmp_path: Path, mo
     assert dest.read_bytes() == _PAYLOAD
     assert (manifest.files[0].status, manifest.files[0].size_bytes) == ("complete", len(_PAYLOAD))
     assert manifest.files[0].sha256 == sha256_of_file(dest)
-
-
-def _write_parquet(path: Path, texts: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pa.table({"text": texts, "id": [str(i) for i in range(len(texts))]}), path)
 
 
 def test_huggingface_parquet_files_stay_under_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,32 +132,6 @@ def test_huggingface_parquet_files_stay_under_data(tmp_path: Path, monkeypatch: 
     assert manifest.files[0].url.startswith(f"hf://datasets/{entry.hf_repo}/")
     assert not DataPaths(data_root).raw_source(entry.id).exists()
     assert {path.name for path in tmp_path.iterdir()} == {"data"}
-
-
-class _FakeHubFilesystem:
-    """``HfFileSystem`` stand-in serving local Parquet files and counting the bytes read."""
-
-    def __init__(self, files: dict[str, Path], error: Exception | None = None) -> None:
-        self.files, self.error, self.bytes_read = files, error, 0
-
-    def glob(self, pattern: str) -> list[str]:
-        if self.error is not None:
-            raise self.error
-        from fnmatch import fnmatch
-
-        return [name for name in self.files if fnmatch(name, pattern)]
-
-    def open(self, name: str, block_size: int):
-        handle = open(self.files[name], "rb")
-        original_read = handle.read
-
-        def read(size: int = -1) -> bytes:
-            data = original_read(size)
-            self.bytes_read += len(data)
-            return data
-
-        handle.read = read  # type: ignore[method-assign]
-        return handle
 
 
 def test_streamed_source_reads_only_needed_columns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -212,14 +170,6 @@ def test_every_http_format_has_a_reader() -> None:
     assert set(readers.HTTP_READERS) == set(SourceFormat)
 
 
-# ─────────────────────────────── check_sources ───────────────────────────────
-
-
-def _mark_all_blocked(data_root: Path) -> None:
-    for entry in SOURCES:
-        save_manifest(SourceManifest(source_id=entry.id, status="blocked"), data_root)
-
-
 def test_check_sources_fails_on_a_failed_or_missing_source(tmp_path: Path) -> None:
     _mark_all_blocked(tmp_path)
     data_import.check_sources(data_import.DataImportSettings(data_root=tmp_path))
@@ -245,3 +195,43 @@ def test_complete_manifest_with_missing_shards_fails_the_check(tmp_path: Path) -
     assert load_manifest(_WIKI.id, tmp_path).status == "complete"
     with pytest.raises(MissingSourcesError, match="hr-wikipedia"):
         data_import.check_sources(data_import.DataImportSettings(data_root=tmp_path))
+
+
+@pytest.fixture
+def serve(monkeypatch: pytest.MonkeyPatch) -> Callable[[Callable[[httpx.Request], httpx.Response]], list]:
+    """Route ``httpx.stream`` to *handler*; returns the list of received requests."""
+
+    monkeypatch.setattr(downloaders.time, "sleep", lambda seconds: None)
+
+    def install(handler: Callable[[httpx.Request], httpx.Response]) -> list[httpx.Request]:
+        requests: list[httpx.Request] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return handler(request)
+
+        def stream(method: str, url: str, **kwargs):
+            return httpx.Client(transport=httpx.MockTransport(respond)).stream(method, url, **kwargs)
+
+        monkeypatch.setattr(downloaders.httpx, "stream", stream)
+        return requests
+
+    return install
+
+
+def _range_server(request: httpx.Request) -> httpx.Response:
+    start = int(request.headers["Range"].removeprefix("bytes=").rstrip("-")) if "Range" in request.headers else 0
+    if start >= len(_PAYLOAD):
+        return httpx.Response(416, headers={"Content-Range": f"bytes */{len(_PAYLOAD)}"})
+    status = 206 if start else 200
+    return httpx.Response(status, content=_PAYLOAD[start:], headers={"Content-Length": str(len(_PAYLOAD) - start)})
+
+
+def _write_parquet(path: Path, texts: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table({"text": texts, "id": [str(i) for i in range(len(texts))]}), path)
+
+
+def _mark_all_blocked(data_root: Path) -> None:
+    for entry in SOURCES:
+        save_manifest(SourceManifest(source_id=entry.id, status="blocked"), data_root)

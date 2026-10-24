@@ -20,25 +20,6 @@ _RETRYABLE_STATUS = frozenset({408, 425, 429})
 _CONTENT_RANGE_TOTAL = re.compile(r"bytes \*/(\d+)")
 
 
-def _is_retryable(error: Exception) -> bool:
-    if isinstance(error, httpx.HTTPStatusError):
-        status = error.response.status_code
-        return status in _RETRYABLE_STATUS or status >= 500
-    return True
-
-
-def _promote(part: Path, destination: Path, url: str, expected_sha256: str | None) -> Path:
-    """Rename the finished *part* file to *destination*, checking its SHA-256 if one is expected."""
-
-    part.rename(destination)
-    if expected_sha256 is not None:
-        actual = sha256_of_file(destination)
-        if actual != expected_sha256:
-            destination.unlink()
-            raise ValueError(f"SHA-256 mismatch after download of {url}: expected {expected_sha256}, got {actual}")
-    return destination
-
-
 def download_http(
     url: str,
     destination: Path,
@@ -141,3 +122,22 @@ def download_http(
                 time.sleep(wait)
 
     raise last_exc
+
+
+def _promote(part: Path, destination: Path, url: str, expected_sha256: str | None) -> Path:
+    """Rename the finished *part* file to *destination*, checking its SHA-256 if one is expected."""
+
+    part.rename(destination)
+    if expected_sha256 is not None:
+        actual = sha256_of_file(destination)
+        if actual != expected_sha256:
+            destination.unlink()
+            raise ValueError(f"SHA-256 mismatch after download of {url}: expected {expected_sha256}, got {actual}")
+    return destination
+
+
+def _is_retryable(error: Exception) -> bool:
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        return status in _RETRYABLE_STATUS or status >= 500
+    return True

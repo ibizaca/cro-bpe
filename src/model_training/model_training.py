@@ -113,6 +113,31 @@ class _Corpus:
     check_texts: list[str]
 
 
+def run(settings: TrainingSettings | None = None, tracker: Tracker | None = None) -> list[Path]:
+    """Train and save every vocabulary size; returns the model directories."""
+
+    settings = settings or TrainingSettings()
+    paths = DataPaths(settings.data_root)
+    tracker = tracker or MlflowTracker(settings.experiment_name, paths)
+    logger.info("Starting model training for vocabulary sizes %s", settings.vocab_sizes)
+
+    corpus = _load_corpus(paths, settings)
+    logger.info(
+        "Corpus: %d documents, %.2f GB; export check on %d documents",
+        corpus.train_documents,
+        corpus.summary.train_bytes / 1e9,
+        len(corpus.check_texts),
+    )
+
+    sizes = sorted(settings.vocab_sizes, reverse=True)
+    full = _train(sizes[0], corpus, settings) if settings.train_once else None
+    model_dirs = []
+    for vocab_size in sizes:
+        model = _truncated(full, vocab_size) if full is not None else _train(vocab_size, corpus, settings)
+        model_dirs.append(_save_model(model, corpus, paths, settings, tracker))
+    return model_dirs
+
+
 def _load_corpus(paths: DataPaths, settings: TrainingSettings) -> _Corpus:
     train_files = sorted(paths.train.glob("part-*.parquet"))
     if not train_files or not paths.mixture.is_file():
@@ -124,12 +149,6 @@ def _load_corpus(paths: DataPaths, settings: TrainingSettings) -> _Corpus:
         summary=MixtureSummary.load(paths.mixture),
         check_texts=export_check_texts(train_files, holdout_files, settings.export_check_documents),
     )
-
-
-def _iter_texts(files: list[Path], batch_size: int) -> Iterator[list[str]]:
-    for path in files:
-        for batch in pq.ParquetFile(path).iter_batches(batch_size=batch_size, columns=["text"]):
-            yield batch.column("text").to_pylist()
 
 
 def export_check_texts(train_files: list[Path], holdout_files: list[Path], train_documents: int) -> list[str]:
@@ -153,6 +172,31 @@ def export_check_texts(train_files: list[Path], holdout_files: list[Path], train
     return texts
 
 
+def _train(vocab_size: int, corpus: _Corpus, settings: TrainingSettings) -> TrainedModel:
+    logger.info("Training BPE (vocab %d) on %d documents", vocab_size, corpus.train_documents)
+    tokenizer = build_tokenizer()
+    trainer = build_trainer(vocab_size, settings.min_frequency, settings.max_token_length)
+    started = time.monotonic()
+    tokenizer.train_from_iterator(
+        _iter_texts(corpus.train_files, settings.batch_size), trainer=trainer, length=corpus.train_documents
+    )
+    training_seconds = time.monotonic() - started
+    logger.info("Training finished in %.1f min, vocabulary size %d", training_seconds / 60, tokenizer.get_vocab_size())
+    return TrainedModel(tokenizer, vocab_size, vocab_size, training_seconds)
+
+
+def _iter_texts(files: list[Path], batch_size: int) -> Iterator[list[str]]:
+    for path in files:
+        for batch in pq.ParquetFile(path).iter_batches(batch_size=batch_size, columns=["text"]):
+            yield batch.column("text").to_pylist()
+
+
+def _truncated(full: TrainedModel, vocab_size: int) -> TrainedModel:
+    return TrainedModel(
+        truncate_tokenizer(full.tokenizer, vocab_size), vocab_size, full.vocab_size, full.training_seconds
+    )
+
+
 def truncate_tokenizer(tokenizer: Tokenizer, vocab_size: int) -> Tokenizer:
     """The tokenizer *tokenizer*'s training run would have produced with a target of *vocab_size*.
 
@@ -171,25 +215,6 @@ def truncate_tokenizer(tokenizer: Tokenizer, vocab_size: int) -> Tokenizer:
     if len(model["vocab"]) != vocab_size or any(token not in model["vocab"] for token in merged):
         raise ValueError("Token ids are not in merge order; the vocabulary cannot be truncated")
     return Tokenizer.from_str(json.dumps(config))
-
-
-def _train(vocab_size: int, corpus: _Corpus, settings: TrainingSettings) -> TrainedModel:
-    logger.info("Training BPE (vocab %d) on %d documents", vocab_size, corpus.train_documents)
-    tokenizer = build_tokenizer()
-    trainer = build_trainer(vocab_size, settings.min_frequency, settings.max_token_length)
-    started = time.monotonic()
-    tokenizer.train_from_iterator(
-        _iter_texts(corpus.train_files, settings.batch_size), trainer=trainer, length=corpus.train_documents
-    )
-    training_seconds = time.monotonic() - started
-    logger.info("Training finished in %.1f min, vocabulary size %d", training_seconds / 60, tokenizer.get_vocab_size())
-    return TrainedModel(tokenizer, vocab_size, vocab_size, training_seconds)
-
-
-def _truncated(full: TrainedModel, vocab_size: int) -> TrainedModel:
-    return TrainedModel(
-        truncate_tokenizer(full.tokenizer, vocab_size), vocab_size, full.vocab_size, full.training_seconds
-    )
 
 
 def _save_model(
@@ -234,31 +259,6 @@ def _save_model(
         tracker.log_artifacts(model_dir, artifact_path="tokenizer")
         logger.info("Tokenizer saved to %s", model_dir)
     return model_dir
-
-
-def run(settings: TrainingSettings | None = None, tracker: Tracker | None = None) -> list[Path]:
-    """Train and save every vocabulary size; returns the model directories."""
-
-    settings = settings or TrainingSettings()
-    paths = DataPaths(settings.data_root)
-    tracker = tracker or MlflowTracker(settings.experiment_name, paths)
-    logger.info("Starting model training for vocabulary sizes %s", settings.vocab_sizes)
-
-    corpus = _load_corpus(paths, settings)
-    logger.info(
-        "Corpus: %d documents, %.2f GB; export check on %d documents",
-        corpus.train_documents,
-        corpus.summary.train_bytes / 1e9,
-        len(corpus.check_texts),
-    )
-
-    sizes = sorted(settings.vocab_sizes, reverse=True)
-    full = _train(sizes[0], corpus, settings) if settings.train_once else None
-    model_dirs = []
-    for vocab_size in sizes:
-        model = _truncated(full, vocab_size) if full is not None else _train(vocab_size, corpus, settings)
-        model_dirs.append(_save_model(model, corpus, paths, settings, tracker))
-    return model_dirs
 
 
 if __name__ == "__main__":

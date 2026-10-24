@@ -10,11 +10,6 @@ from feature_engineering.near_dedup import band_hashes, near_duplicate_mask
 _SETTINGS = {"ngram": 5, "bands": 14, "rows": 8}
 
 
-def _document(seed: int, words: int = 300) -> list[str]:
-    rng = random.Random(seed)
-    return [f"riječ{rng.randrange(20_000)}" for _ in range(words)]
-
-
 def test_band_hashes_find_near_copies_only() -> None:
     original = _document(0)
     edited = [*original[:150], "promijenjeno", *original[151:]]
@@ -47,3 +42,8 @@ def test_near_duplicate_mask_keeps_the_earliest_kept_copy() -> None:
     duplicate = near_duplicate_mask(bands, keep)
     # Doc 0 is not kept (an exact duplicate), so doc 1 is the first copy; docs without a signature never match.
     assert duplicate.tolist() == [False, False, False, True, False, False]
+
+
+def _document(seed: int, words: int = 300) -> list[str]:
+    rng = random.Random(seed)
+    return [f"riječ{rng.randrange(20_000)}" for _ in range(words)]

@@ -40,24 +40,24 @@ _BATCH_ROWS = 4_096
 _BLOCK_SHINGLES = 1 << 16  # 512 KB of shingle hashes per MinHash block, within a core's L2 cache
 
 
-def _permutations(count: int) -> tuple[np.ndarray, np.ndarray]:
-    """Multipliers (odd) and offsets of *count* multiply-shift hash functions, fixed by the seed."""
+def signature_path(shard: Path, cache_dir: Path, ngram: int, bands: int, rows: int) -> Path:
+    """Cache file of *shard*'s band hashes; the name changes with the shard and the settings."""
 
-    rng = np.random.default_rng(_SEED)
-    multipliers = rng.integers(1, 2**63, size=count, dtype=np.uint64) * np.uint64(2) + np.uint64(1)
-    offsets = rng.integers(0, 2**63, size=count, dtype=np.uint64)
-    return multipliers, offsets
+    key = fingerprint(VERSION, ngram, bands, rows, file_signatures([shard]))[:16]
+    return cache_dir / f"{shard.stem}.{key}.npy"
 
 
-def _finalize(values: np.ndarray) -> np.ndarray:
-    """splitmix64 finalizer, so combined hashes use all 64 bits."""
+def shard_signatures(shard: Path, output: Path, ngram: int, bands: int, rows: int) -> int:
+    """Compute and save *shard*'s ``(bands, documents)`` band hashes to *output*; returns the document count."""
 
-    values = values ^ (values >> np.uint64(30))
-    values = values * np.uint64(0xBF58476D1CE4E5B9)
-    values = values ^ (values >> np.uint64(27))
-    values = values * np.uint64(0x94D049BB133111EB)
-    finalized: np.ndarray = values ^ (values >> np.uint64(31))
-    return finalized
+    batches = [
+        band_hashes(batch.column("text"), ngram, bands, rows)
+        for batch in pq.ParquetFile(shard).iter_batches(batch_size=_BATCH_ROWS, columns=["text"])
+    ]
+    signatures = np.concatenate(batches, axis=1) if batches else np.zeros((bands, 0), dtype=np.uint64)
+    with atomic_path(output) as temporary, temporary.open("wb") as handle:
+        np.save(handle, signatures)
+    return int(signatures.shape[1])
 
 
 def band_hashes(texts: pa.Array | pa.ChunkedArray, ngram: int, bands: int, rows: int) -> np.ndarray:
@@ -116,24 +116,24 @@ def band_hashes(texts: pa.Array | pa.ChunkedArray, ngram: int, bands: int, rows:
     return result
 
 
-def signature_path(shard: Path, cache_dir: Path, ngram: int, bands: int, rows: int) -> Path:
-    """Cache file of *shard*'s band hashes; the name changes with the shard and the settings."""
+def _finalize(values: np.ndarray) -> np.ndarray:
+    """splitmix64 finalizer, so combined hashes use all 64 bits."""
 
-    key = fingerprint(VERSION, ngram, bands, rows, file_signatures([shard]))[:16]
-    return cache_dir / f"{shard.stem}.{key}.npy"
+    values = values ^ (values >> np.uint64(30))
+    values = values * np.uint64(0xBF58476D1CE4E5B9)
+    values = values ^ (values >> np.uint64(27))
+    values = values * np.uint64(0x94D049BB133111EB)
+    finalized: np.ndarray = values ^ (values >> np.uint64(31))
+    return finalized
 
 
-def shard_signatures(shard: Path, output: Path, ngram: int, bands: int, rows: int) -> int:
-    """Compute and save *shard*'s ``(bands, documents)`` band hashes to *output*; returns the document count."""
+def _permutations(count: int) -> tuple[np.ndarray, np.ndarray]:
+    """Multipliers (odd) and offsets of *count* multiply-shift hash functions, fixed by the seed."""
 
-    batches = [
-        band_hashes(batch.column("text"), ngram, bands, rows)
-        for batch in pq.ParquetFile(shard).iter_batches(batch_size=_BATCH_ROWS, columns=["text"])
-    ]
-    signatures = np.concatenate(batches, axis=1) if batches else np.zeros((bands, 0), dtype=np.uint64)
-    with atomic_path(output) as temporary, temporary.open("wb") as handle:
-        np.save(handle, signatures)
-    return int(signatures.shape[1])
+    rng = np.random.default_rng(_SEED)
+    multipliers = rng.integers(1, 2**63, size=count, dtype=np.uint64) * np.uint64(2) + np.uint64(1)
+    offsets = rng.integers(0, 2**63, size=count, dtype=np.uint64)
+    return multipliers, offsets
 
 
 def near_duplicate_mask(band_columns: Iterable[np.ndarray], keep: np.ndarray) -> np.ndarray:
