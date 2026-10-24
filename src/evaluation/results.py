@@ -12,8 +12,6 @@ from pydantic import Field, SerializerFunctionWrapHandler, model_serializer
 
 from utils.artifacts import Artifact
 
-# ─────────────────────────────── quality ─────────────────────────────────────
-
 _COUNT_FIELDS = ("documents", "tokens", "roundtrip_failures")
 
 
@@ -53,9 +51,6 @@ class FertilityBucket(Artifact):
     tokens_per_word: float
 
 
-# ─────────────────────────────── throughput ──────────────────────────────────
-
-
 class Spread(Artifact):
     """One measurement over the benchmark rounds."""
 
@@ -92,9 +87,6 @@ class ThroughputSummary(Artifact):
     def full_threads(self) -> str:
         """Key of the largest thread count, where the sequential and decode figures were measured."""
         return max(self.encode_batch, key=int)
-
-
-# ─────────────────────────────── per tokenizer ───────────────────────────────
 
 
 class TokenizerResult(Artifact):
@@ -176,9 +168,6 @@ class SummaryRow(Artifact):
             "encode_sequential.megabytes_per_second": self.encode_sequential_megabytes_per_second,
             "decode_batch.tokens_per_second": self.decode_batch_tokens_per_second,
         }
-
-
-# ─────────────────────────────── reports ─────────────────────────────────────
 
 
 class CpuState(Artifact):
