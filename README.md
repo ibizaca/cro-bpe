@@ -8,7 +8,10 @@ more compute than it should. cro-bpe is a byte-level BPE tokenizer trained only
 on Croatian: 12 GB sampled from ten openly licensed corpora (web crawls,
 Wikipedia, parliamentary proceedings, EU legislation) after exact and
 near-duplicate removal, in vocabularies of 32k, 48k and 64k tokens. Every model is also exported to tiktoken, which encodes
-the same ids several times faster.
+the same ids several times faster. The models are on the Hugging Face Hub:
+[ibizaca/cro-bpe-32k](https://huggingface.co/ibizaca/cro-bpe-32k),
+[-48k](https://huggingface.co/ibizaca/cro-bpe-48k),
+[-64k](https://huggingface.co/ibizaca/cro-bpe-64k).
 
 This repository holds the whole pipeline, from downloading the corpora to the
 evaluation, so every model can be rebuilt from scratch.
@@ -52,12 +55,53 @@ so `PYTHONPATH=src` is not needed.
 
 ## Using the tokenizer
 
-The models are built by the pipeline into `data/models/cro-bpe-<vocab>/`; they
-are not stored in this repository.
+The models are published on the Hugging Face Hub, in the
+[cro-bpe collection](https://huggingface.co/collections/ibizaca/cro-bpe-6adca6076cac342bcf8173f7):
+[ibizaca/cro-bpe-32k](https://huggingface.co/ibizaca/cro-bpe-32k),
+[ibizaca/cro-bpe-48k](https://huggingface.co/ibizaca/cro-bpe-48k) and
+[ibizaca/cro-bpe-64k](https://huggingface.co/ibizaca/cro-bpe-64k). Each repository
+holds `tokenizer.json` and the tiktoken export with the same ids.
 
-### Hugging Face tokenizers
+### From the Hub
 
-Offsets, word ids and padding:
+```python
+from tokenizers import Tokenizer
+
+tokenizer = Tokenizer.from_pretrained("ibizaca/cro-bpe-32k")
+tokenizer.encode("Dobar dan, kako ste?").ids  # [18251, 1347, 80, 566, 895, 99]
+
+# or with transformers (not a dependency of this project):
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained("ibizaca/cro-bpe-32k")
+```
+
+tiktoken has no registry for third-party encodings, so the rank file and its
+config are loaded from the Hub. tiktoken has no normalizer, so apply NFC first:
+
+```python
+import json
+import unicodedata
+
+import tiktoken
+from huggingface_hub import hf_hub_download
+from tiktoken.load import load_tiktoken_bpe
+
+config = json.load(open(hf_hub_download("ibizaca/cro-bpe-32k", "tiktoken.json")))
+encoding = tiktoken.Encoding(
+    name=config["name"],
+    pat_str=config["pattern"],
+    mergeable_ranks=load_tiktoken_bpe(hf_hub_download("ibizaca/cro-bpe-32k", config["rank_file"])),
+    special_tokens=config["special_tokens"],
+)
+encoding.encode_ordinary(unicodedata.normalize("NFC", "Dobar dan, kako ste?"))  # [18251, 1347, 80, 566, 895, 99]
+```
+
+### From a local build
+
+The pipeline builds the models into `data/models/cro-bpe-<vocab>/`; they are not
+stored in this repository. Hugging Face tokenizers, with offsets, word ids and
+padding:
 
 ```python
 from pathlib import Path
@@ -72,22 +116,7 @@ encoding.ids  # [18251, 1347, 80, 566, 895, 99]
 tokenizer.decode(encoding.ids)  # 'Dobar dan, kako ste?'
 ```
 
-### Outside this project, load `tokenizer.json` directly:
-
-```python
-from tokenizers import Tokenizer
-
-tokenizer = Tokenizer.from_file("data/models/cro-bpe-32k/tokenizer.json")
-
-# or with transformers (not a dependency of this project):
-from transformers import PreTrainedTokenizerFast
-
-tokenizer = PreTrainedTokenizerFast(tokenizer_file="data/models/cro-bpe-32k/tokenizer.json")
-```
-
-### Tiktoken
-
-The fast path, with the same ids; it NFC-normalizes like `tokenizer.json`:
+tiktoken, the fast path, with the same ids; it NFC-normalizes like `tokenizer.json`:
 
 ```python
 from pathlib import Path
