@@ -28,6 +28,17 @@ evaluation_config = WorkflowConfigs.EVALUATION(
 )
 
 
+def main() -> int:
+    logger = setup_logging(log_level=logging.INFO, log_to_file=True)
+    try:
+        run_workflow(logger)
+    except PipelineError as error:
+        # Missing inputs or sources and export mismatches are data problems, not bugs: no traceback.
+        logger.error("%s: %s", type(error).__name__, error)
+        return 1
+    return 0
+
+
 def run_workflow(logger: logging.Logger) -> None:
     # Create necessary data directories
     logger.info("Creating data directories")
@@ -49,17 +60,6 @@ def run_workflow(logger: logging.Logger) -> None:
             model_training_config.run()
         if evaluation_config.run_step:
             evaluation_config.run()
-
-
-def main() -> int:
-    logger = setup_logging(log_level=logging.INFO, log_to_file=True)
-    try:
-        run_workflow(logger)
-    except PipelineError as error:
-        # Missing inputs or sources and export mismatches are data problems, not bugs: no traceback.
-        logger.error("%s: %s", type(error).__name__, error)
-        return 1
-    return 0
 
 
 if __name__ == "__main__":

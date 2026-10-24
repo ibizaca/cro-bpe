@@ -8,8 +8,6 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
-### DIRECTORIES ###
-
 
 class DataSubdirectories(str, Enum):
     RAW = "raw"
@@ -18,19 +16,13 @@ class DataSubdirectories(str, Enum):
     MODELS = "models"
 
 
-def default_data_root() -> Path:
-    """``./data``, resolved when called (not at import time) so the working directory can change first."""
-
-    return Path.cwd() / "data"
-
-
 @dataclass(frozen=True)
 class DataPaths:
     """Every path the stages read or write, derived from one ``data/`` root."""
 
     root: Path
 
-    # ── data import ──
+    # Data import
     @property
     def raw(self) -> Path:
         return self.root / DataSubdirectories.RAW.value
@@ -49,7 +41,7 @@ class DataPaths:
         """Downloaded source files of *source_id*, deleted after conversion."""
         return self.raw_source_root(source_id) / "source"
 
-    # ── preprocessing ──
+    # Preprocessing
     @property
     def preprocessed(self) -> Path:
         return self.root / DataSubdirectories.PREPROCESSED.value
@@ -60,7 +52,7 @@ class DataPaths:
     def source_stats(self, source_id: str) -> Path:
         return self.preprocessed_source(source_id) / "stats.json"
 
-    # ── feature engineering ──
+    # Feature engineering
     @property
     def features(self) -> Path:
         return self.root / DataSubdirectories.FEATURES.value
@@ -81,7 +73,7 @@ class DataPaths:
         """Cached near-dedup band hashes of *source_id*'s preprocessed shards."""
         return self.features / "minhash" / source_id
 
-    # ── models ──
+    # Models
     @property
     def models(self) -> Path:
         return self.root / DataSubdirectories.MODELS.value
@@ -112,6 +104,45 @@ class DataPaths:
         return self.models / "mlartifacts"
 
 
+class BaseWorkflowControl(BaseModel):
+    run_step: bool = Field(default=True, description="Whether the flow step should be run or not")
+    run_function: Callable = Field(description="The main function to execute for this flow step")
+    settings: Any = Field(default=None, description="Settings passed to run_function; None uses the stage defaults")
+
+    def run(self) -> Any:
+        return self.run_function(self.settings)
+
+
+class DownloadConfig(BaseWorkflowControl):
+    pass
+
+
+class PreprocessingConfig(BaseWorkflowControl):
+    pass
+
+
+class FeatureEngineeringConfig(BaseWorkflowControl):
+    pass
+
+
+class ModelTrainingConfig(BaseWorkflowControl):
+    pass
+
+
+class EvaluationConfig(BaseWorkflowControl):
+    pass
+
+
+class WorkflowConfigs:
+    """Namespace of the per-step config classes; ``main.py`` instantiates each one."""
+
+    DOWNLOAD: ClassVar[type[DownloadConfig]] = DownloadConfig
+    PREPROCESSING: ClassVar[type[PreprocessingConfig]] = PreprocessingConfig
+    FEATURE_ENGINEERING: ClassVar[type[FeatureEngineeringConfig]] = FeatureEngineeringConfig
+    MODEL_TRAINING: ClassVar[type[ModelTrainingConfig]] = ModelTrainingConfig
+    EVALUATION: ClassVar[type[EvaluationConfig]] = EvaluationConfig
+
+
 def create_data_directories(data_root: Path | None = None) -> None:
     """
     Creates missing data directories without deleting resumable downloads or
@@ -125,27 +156,10 @@ def create_data_directories(data_root: Path | None = None) -> None:
         new_directory.mkdir(parents=True, exist_ok=True)
 
 
-def create_logging_directory(keep_logs: int | None = 50) -> Path:
-    """
-    Creates the logging directory if needed. Earlier log files are kept, except
-    that only the newest *keep_logs* files survive (``None`` keeps all).
+def default_data_root() -> Path:
+    """``./data``, resolved when called (not at import time) so the working directory can change first."""
 
-    Returns:
-        The path to the logging directory.
-    """
-
-    logging_directory = Path.cwd() / "logs"
-    logging_directory.mkdir(exist_ok=True)
-    if keep_logs is not None:
-        # Timestamped names sort chronologically; one slot is left for the new file.
-        old_logs = sorted(logging_directory.glob("cro_bpe_*.log"))
-        for old_log in old_logs[: max(0, len(old_logs) - max(0, keep_logs - 1))]:
-            old_log.unlink(missing_ok=True)
-
-    return logging_directory
-
-
-### LOGGING ###
+    return Path.cwd() / "data"
 
 
 def setup_logging(
@@ -198,43 +212,21 @@ def setup_logging(
     return root_logger
 
 
-### FLOW CONTROL ###
+def create_logging_directory(keep_logs: int | None = 50) -> Path:
+    """
+    Creates the logging directory if needed. Earlier log files are kept, except
+    that only the newest *keep_logs* files survive (``None`` keeps all).
 
+    Returns:
+        The path to the logging directory.
+    """
 
-class BaseWorkflowControl(BaseModel):
-    run_step: bool = Field(default=True, description="Whether the flow step should be run or not")
-    run_function: Callable = Field(description="The main function to execute for this flow step")
-    settings: Any = Field(default=None, description="Settings passed to run_function; None uses the stage defaults")
+    logging_directory = Path.cwd() / "logs"
+    logging_directory.mkdir(exist_ok=True)
+    if keep_logs is not None:
+        # Timestamped names sort chronologically; one slot is left for the new file.
+        old_logs = sorted(logging_directory.glob("cro_bpe_*.log"))
+        for old_log in old_logs[: max(0, len(old_logs) - max(0, keep_logs - 1))]:
+            old_log.unlink(missing_ok=True)
 
-    def run(self) -> Any:
-        return self.run_function(self.settings)
-
-
-class DownloadConfig(BaseWorkflowControl):
-    pass
-
-
-class PreprocessingConfig(BaseWorkflowControl):
-    pass
-
-
-class FeatureEngineeringConfig(BaseWorkflowControl):
-    pass
-
-
-class ModelTrainingConfig(BaseWorkflowControl):
-    pass
-
-
-class EvaluationConfig(BaseWorkflowControl):
-    pass
-
-
-class WorkflowConfigs:
-    """Namespace of the per-step config classes; ``main.py`` instantiates each one."""
-
-    DOWNLOAD: ClassVar[type[DownloadConfig]] = DownloadConfig
-    PREPROCESSING: ClassVar[type[PreprocessingConfig]] = PreprocessingConfig
-    FEATURE_ENGINEERING: ClassVar[type[FeatureEngineeringConfig]] = FeatureEngineeringConfig
-    MODEL_TRAINING: ClassVar[type[ModelTrainingConfig]] = ModelTrainingConfig
-    EVALUATION: ClassVar[type[EvaluationConfig]] = EvaluationConfig
+    return logging_directory
