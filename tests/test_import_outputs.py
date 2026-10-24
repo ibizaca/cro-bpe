@@ -17,10 +17,6 @@ from utils.project import DataPaths
 _ENTRY = next(s for s in SOURCES if s.id == "multi-eurlex-hr")
 
 
-def _documents(count: int) -> list[DocumentRecord]:
-    return [DocumentRecord(text=f"Dokument broj {i}.", source_id=_ENTRY.id, doc_id=str(i)) for i in range(count)]
-
-
 def test_writer_rotates_shards_and_records_checksums(tmp_path: Path) -> None:
     writer = ParquetShardWriter(tmp_path, max_rows=4)
     for document in _documents(10):
@@ -32,24 +28,6 @@ def test_writer_rotates_shards_and_records_checksums(tmp_path: Path) -> None:
     texts = [t for shard in shards for t in pq.read_table(tmp_path / shard.path).column("text").to_pylist()]
     assert texts == [document.text for document in _documents(10)]
     assert not list(tmp_path.glob("*.tmp"))
-
-
-def _completed_source(data_root: Path) -> Path:
-    output_dir = DataPaths(data_root).raw_parquet(_ENTRY.id)
-    writer = ParquetShardWriter(output_dir, max_rows=3)
-    for document in _documents(5):
-        writer.write(document)
-    shards = writer.close()
-    save_manifest(
-        SourceManifest(
-            source_id=_ENTRY.id,
-            status="complete",
-            documents=5,
-            output_files=shards,
-        ),
-        data_root,
-    )
-    return output_dir / shards[0].path
 
 
 def test_skip_path_does_not_hash(tmp_path: Path) -> None:
@@ -95,3 +73,25 @@ def test_gated_source_without_token_is_blocked(tmp_path: Path, monkeypatch: pyte
     gated = next(s for s in SOURCES if isinstance(s, HfStreamSource) and s.requires_hf_token)
     manifest = data_import.ingest_source(gated, tmp_path)
     assert (manifest.status, manifest.blocked_reason) == ("blocked", "auth_required")
+
+
+def _documents(count: int) -> list[DocumentRecord]:
+    return [DocumentRecord(text=f"Dokument broj {i}.", source_id=_ENTRY.id, doc_id=str(i)) for i in range(count)]
+
+
+def _completed_source(data_root: Path) -> Path:
+    output_dir = DataPaths(data_root).raw_parquet(_ENTRY.id)
+    writer = ParquetShardWriter(output_dir, max_rows=3)
+    for document in _documents(5):
+        writer.write(document)
+    shards = writer.close()
+    save_manifest(
+        SourceManifest(
+            source_id=_ENTRY.id,
+            status="complete",
+            documents=5,
+            output_files=shards,
+        ),
+        data_root,
+    )
+    return output_dir / shards[0].path

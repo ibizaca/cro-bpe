@@ -36,10 +36,6 @@ def test_atomic_write_replaces_only_on_success(tmp_path: Path) -> None:
     assert sorted(path.name for path in target.parent.iterdir()) == ["file.json"]
 
 
-def _table(texts: list[str]) -> pa.Table:
-    return pa.table({"text": texts, "source": ["s"] * len(texts)}).cast(CORPUS_SCHEMA)
-
-
 def test_rolling_writer_rotates_and_renames_shards(tmp_path: Path) -> None:
     with RollingParquetWriter(tmp_path, CORPUS_SCHEMA, max_shard_bytes=100) as writer:
         for i in range(3):
@@ -86,3 +82,7 @@ def test_manifest_status_is_typed(tmp_path: Path) -> None:
     invalid.write_text(json.dumps({"source_id": "y", "status": "done"}))
     with pytest.raises(ValidationError):
         load_manifest("y", tmp_path)
+
+
+def _table(texts: list[str]) -> pa.Table:
+    return pa.table({"text": texts, "source": ["s"] * len(texts)}).cast(CORPUS_SCHEMA)

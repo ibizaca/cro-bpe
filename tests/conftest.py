@@ -40,6 +40,18 @@ ROUNDTRIP_TEXTS = [
     "0 00 000 0000 1234567 3.14159 -42 1e10",
 ]
 
+FAKE_REVISION = "0123456789abcdef0123456789abcdef01234567"
+
+__all__ = [
+    "CORPUS",
+    "FAKE_REVISION",
+    "ROUNDTRIP_TEXTS",
+    "SPECIAL_TOKENS",
+    "TINY_VOCAB_SIZE",
+    "fake_hub_download",
+    "synthetic_corpus",
+]
+
 
 def synthetic_corpus(documents: int, seed: int = 0) -> list[str]:
     """Croatian-looking words with enough variety for a few thousand merges."""
@@ -48,9 +60,6 @@ def synthetic_corpus(documents: int, seed: int = 0) -> list[str]:
     syllables = ["ka", "ri", "jel", "no", "ža", "šu", "ma", "vi", "ći", "dra", "go", "sti", "lje", "nje", "đu"]
     words = ["".join(rng.choices(syllables, k=rng.randint(1, 4))) for _ in range(3_000)]
     return [" ".join(rng.choices(words, k=60)) + "." for _ in range(documents)]
-
-
-FAKE_REVISION = "0123456789abcdef0123456789abcdef01234567"
 
 
 def fake_hub_download(files: dict[tuple[str, str], bytes]) -> Callable[..., str]:
@@ -72,6 +81,11 @@ def fake_hub_download(files: dict[tuple[str, str], bytes]) -> Callable[..., str]
 
 
 @pytest.fixture(scope="session")
+def tiny_tokenizer(tiny_model_dir: Path) -> Tokenizer:
+    return Tokenizer.from_file(str(tiny_model_dir / "tokenizer.json"))
+
+
+@pytest.fixture(scope="session")
 def tiny_model_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Directory with tokenizer.json, vocab.json, merges.txt and the tiktoken export of a tiny model."""
 
@@ -83,19 +97,3 @@ def tiny_model_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     tokenizer.model.save(str(model_dir))
     export_tiktoken(model_dir)
     return model_dir
-
-
-@pytest.fixture(scope="session")
-def tiny_tokenizer(tiny_model_dir: Path) -> Tokenizer:
-    return Tokenizer.from_file(str(tiny_model_dir / "tokenizer.json"))
-
-
-__all__ = [
-    "CORPUS",
-    "FAKE_REVISION",
-    "ROUNDTRIP_TEXTS",
-    "SPECIAL_TOKENS",
-    "TINY_VOCAB_SIZE",
-    "fake_hub_download",
-    "synthetic_corpus",
-]

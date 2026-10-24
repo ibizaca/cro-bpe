@@ -23,11 +23,6 @@ _SNAPSHOT = Path(__file__).with_name("versions.json")
 _MODULES = [preprocessing, cleaning, filters, charclasses, feature_engineering, mixture, near_dedup]
 
 
-def _current(module: ModuleType) -> dict[str, object]:
-    source = Path(module.__file__ or "").read_bytes()
-    return {"version": module.VERSION, "sha256": hashlib.sha256(source).hexdigest()}
-
-
 @pytest.mark.parametrize("module", _MODULES, ids=lambda module: module.__name__)
 def test_version_matches_snapshot(module: ModuleType) -> None:
     snapshot = json.loads(_SNAPSHOT.read_text(encoding="utf-8"))
@@ -41,3 +36,8 @@ def test_version_matches_snapshot(module: ModuleType) -> None:
         else "then"
     )
     pytest.fail(f"{module.__name__}: {hint} set its entry in {_SNAPSHOT.name} to {json.dumps(current)}", pytrace=False)
+
+
+def _current(module: ModuleType) -> dict[str, object]:
+    source = Path(module.__file__ or "").read_bytes()
+    return {"version": module.VERSION, "sha256": hashlib.sha256(source).hexdigest()}
