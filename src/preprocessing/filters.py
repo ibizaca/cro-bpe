@@ -27,15 +27,6 @@ class QualityThresholds(BaseModel):
     )
 
 
-def _duplicate_line_char_ratio(text: str) -> float:
-    lines = [line for line in text.split("\n") if line]
-    if len(lines) < 2:
-        return 0.0
-    counts = Counter(lines)
-    duplicated = sum(len(line) * (count - 1) for line, count in counts.items() if count > 1)
-    return duplicated / max(1, sum(len(line) for line in lines))
-
-
 def rejection_reason(text: str, thresholds: QualityThresholds) -> str | None:
     """Return the first failed check's name, or ``None`` if the document is kept."""
 
@@ -63,3 +54,12 @@ def rejection_reason(text: str, thresholds: QualityThresholds) -> str | None:
         return "repeated_lines"
 
     return None
+
+
+def _duplicate_line_char_ratio(text: str) -> float:
+    lines = [line for line in text.split("\n") if line]
+    if len(lines) < 2:
+        return 0.0
+    counts = Counter(lines)
+    duplicated = sum(len(line) * (count - 1) for line, count in counts.items() if count > 1)
+    return duplicated / max(1, sum(len(line) for line in lines))

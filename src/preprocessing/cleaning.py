@@ -52,9 +52,20 @@ _MULTI_SPACE = re.compile(r" {2,}")
 _SPACE_AROUND_NEWLINE = re.compile(r" *\n *")
 _MULTI_NEWLINE = re.compile(r"\n{3,}")
 
-
-def _unescape_entity(match: re.Match[str]) -> str:
-    return html.unescape(match.group())
+# Lines that are table rows, template parameters, magic words or file/category links.
+_WIKI_DROP_LINE = re.compile(r"^\s*(?:\||\{\||!|\{\{|\}\}|__[A-Z]+__|\[\[|(?:Datoteka|Slika|Kategorija|File|Image):)")
+_WIKI_EXTERNAL_LINK = re.compile(r"\[(?:https?:)?//[^\s\]]+(?: ([^\]]*))?\]")
+_WIKI_TEMPLATE = re.compile(r"\{\{[^{}]*\}\}")
+_WIKI_EMPHASIS = re.compile(r"'{2,}")
+_WIKI_LIST_MARKER = re.compile(r"^[ \t]*[*#:;]+[ \t]*", re.MULTILINE)
+# Template parameters (``url=…``, ``access-date=…``, ``align=…``) and unbalanced braces.
+# Parameter names are ASCII, at least two characters and start a word, so prose such
+# as ``x=5`` or ``težina=80`` is kept.
+_WIKI_TEMPLATE_RESIDUE = re.compile(r"(?<![^\s|])[a-z][a-z0-9_-]+=\S*|\{\{|\}\}")
+_WIKI_HEADING = re.compile(r"^(=+) *(.*?) *\1$", re.MULTILINE)
+_WORD = re.compile(r"\S+")
+_LABEL_WORD = re.compile(r"[^\W\d_]+")
+_LINK_TARGET_WINDOW = 8
 
 
 def normalize_text(text: str) -> str:
@@ -81,26 +92,30 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
-# ─────────────────────────── Wikipedia residue ───────────────────────────────
-
-# Lines that are table rows, template parameters, magic words or file/category links.
-_WIKI_DROP_LINE = re.compile(r"^\s*(?:\||\{\||!|\{\{|\}\}|__[A-Z]+__|\[\[|(?:Datoteka|Slika|Kategorija|File|Image):)")
-_WIKI_EXTERNAL_LINK = re.compile(r"\[(?:https?:)?//[^\s\]]+(?: ([^\]]*))?\]")
-_WIKI_TEMPLATE = re.compile(r"\{\{[^{}]*\}\}")
-_WIKI_EMPHASIS = re.compile(r"'{2,}")
-_WIKI_LIST_MARKER = re.compile(r"^[ \t]*[*#:;]+[ \t]*", re.MULTILINE)
-# Template parameters (``url=…``, ``access-date=…``, ``align=…``) and unbalanced braces.
-# Parameter names are ASCII, at least two characters and start a word, so prose such
-# as ``x=5`` or ``težina=80`` is kept.
-_WIKI_TEMPLATE_RESIDUE = re.compile(r"(?<![^\s|])[a-z][a-z0-9_-]+=\S*|\{\{|\}\}")
-_WIKI_HEADING = re.compile(r"^(=+) *(.*?) *\1$", re.MULTILINE)
-_WORD = re.compile(r"\S+")
-_LABEL_WORD = re.compile(r"[^\W\d_]+")
-_LINK_TARGET_WINDOW = 8
+def _unescape_entity(match: re.Match[str]) -> str:
+    return html.unescape(match.group())
 
 
-def _fold(word: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFD", word.casefold()) if not unicodedata.combining(c))
+def clean_wikitext_residue(text: str) -> str:
+    """Strip markup that survived the Wikipedia dump import."""
+
+    text = _WIKI_EXTERNAL_LINK.sub(lambda match: match.group(1) or "", text)
+    for _ in range(3):  # nested templates, innermost first
+        text, replaced = _WIKI_TEMPLATE.subn("", text)
+        if not replaced:
+            break
+    text = _WIKI_TEMPLATE_RESIDUE.sub(" ", text)
+    text = _WIKI_EMPHASIS.sub("", text)
+    text = _WIKI_HEADING.sub(r"\2", text)
+    text = _WIKI_LIST_MARKER.sub("", text)
+    lines = []
+    for line in text.split("\n"):
+        if _WIKI_DROP_LINE.match(line):
+            continue
+        if "|" in line:
+            line = _repair_piped_links(line)
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _repair_piped_links(line: str) -> str:
@@ -129,23 +144,5 @@ def _repair_piped_links(line: str) -> str:
     return result
 
 
-def clean_wikitext_residue(text: str) -> str:
-    """Strip markup that survived the Wikipedia dump import."""
-
-    text = _WIKI_EXTERNAL_LINK.sub(lambda match: match.group(1) or "", text)
-    for _ in range(3):  # nested templates, innermost first
-        text, replaced = _WIKI_TEMPLATE.subn("", text)
-        if not replaced:
-            break
-    text = _WIKI_TEMPLATE_RESIDUE.sub(" ", text)
-    text = _WIKI_EMPHASIS.sub("", text)
-    text = _WIKI_HEADING.sub(r"\2", text)
-    text = _WIKI_LIST_MARKER.sub("", text)
-    lines = []
-    for line in text.split("\n"):
-        if _WIKI_DROP_LINE.match(line):
-            continue
-        if "|" in line:
-            line = _repair_piped_links(line)
-        lines.append(line)
-    return "\n".join(lines)
+def _fold(word: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", word.casefold()) if not unicodedata.combining(c))
