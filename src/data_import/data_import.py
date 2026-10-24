@@ -82,11 +82,59 @@ class DataImportSettings(BaseModel):
     data_root: Path = Field(default_factory=default_data_root, description="Root of the data/ directory.")
 
 
-# ─────────────────────────── helpers ─────────────────────────────────────────
+def run(settings: DataImportSettings | None = None) -> list[SourceManifest]:
+    """Run the full catalog-driven downloading pipeline; returns the manifest of every catalog source.
 
+    Raises if a source is not complete or blocked (see :func:`check_sources`).
+    """
+    settings = settings or DataImportSettings()
+    data_root = settings.data_root
+    logger.info("Starting data downloading")
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    # Record blocked and excluded sources so manifests are always complete
+    for blocked in BLOCKED:
+        if not is_complete(blocked.id, data_root):
+            _write_blocked_manifest(
+                blocked.id,
+                reason=blocked.reason.value,
+                note=blocked.note,
+                data_root=data_root,
+                version=None,
+            )
+
+    for excluded in EXCLUDED:
+        if not DataPaths(data_root).manifest(excluded.id).exists():
+            _write_excluded_manifest(excluded, data_root)
+
+    # Process active sources
+    results: list[SourceManifest] = []
+    for entry in SOURCES:
+        try:
+            m = ingest_source(entry, data_root, settings)
+        except Exception as exc:
+            logger.exception("[%s] unexpected error: %s", entry.id, exc)
+            m = SourceManifest(source_id=entry.id, status=ManifestStatus.FAILED, error=str(exc))
+            save_manifest(m, data_root)
+        results.append(m)
+
+    # Summary
+    logger.info("─" * 60)
+    logger.info("Downloading summary")
+    logger.info("─" * 60)
+    for m in results:
+        if m.status == ManifestStatus.COMPLETE and m.skipped_files:
+            logger.info("  ! %-30s  documents=%d, skipped files: %s", m.source_id, m.documents, m.skipped_files)
+        elif m.status == ManifestStatus.COMPLETE:
+            logger.info("  ✓ %-30s  documents=%d", m.source_id, m.documents)
+        elif m.status == ManifestStatus.BLOCKED:
+            logger.info("  ⊘ %-30s  blocked: %s", m.source_id, m.blocked_reason)
+        else:
+            logger.info("  ✗ %-30s  %s", m.source_id, m.status)
+    for b in BLOCKED:
+        logger.info("  ⊘ %-30s  blocked: %s", b.id, b.reason.value)
+    logger.info("─" * 60)
+    check_sources(settings)
+    return results
 
 
 def _write_blocked_manifest(entry_id: str, reason: str, note: str, data_root: Path, version: str | None = None) -> None:
@@ -103,6 +151,10 @@ def _write_blocked_manifest(entry_id: str, reason: str, note: str, data_root: Pa
     logger.info("[%s] recorded as blocked: %s", entry_id, reason)
 
 
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
 def _write_excluded_manifest(entry: ExcludedEntry, data_root: Path) -> None:
     m = SourceManifest(
         source_id=entry.id,
@@ -115,7 +167,116 @@ def _write_excluded_manifest(entry: ExcludedEntry, data_root: Path) -> None:
     save_manifest(m, data_root)
 
 
-# ─────────────────────── source ingestion ────────────────────────────────────
+def ingest_source(
+    entry: SourceEntry, data_root: Path | None = None, settings: DataImportSettings | None = None
+) -> SourceManifest:
+    """Download and ingest a single catalog source.
+
+    Returns the final :class:`SourceManifest` for the source.
+    """
+    settings = settings or DataImportSettings()
+    data_root = data_root or settings.data_root
+
+    completed = _skip_if_complete(entry, data_root, settings)
+    if completed is not None:
+        return completed
+    manifest = _start_manifest(entry, data_root)
+    stopped = _download(entry, manifest, data_root, settings)
+    if stopped is not None:
+        return stopped
+    try:
+        shards, report = _convert(entry, manifest, data_root)
+    except Exception as exc:
+        return _blocked_or_failed(entry, manifest, data_root, exc)
+    return _finish(entry, manifest, data_root, settings, shards, report)
+
+
+def _skip_if_complete(entry: SourceEntry, data_root: Path, settings: DataImportSettings) -> SourceManifest | None:
+    """The manifest of an already complete source (cleaning up leftover source files), else ``None``."""
+
+    if not is_complete(entry.id, data_root, verify_hashes=settings.verify_existing):
+        return None
+    logger.info("[%s] already complete — skipping", entry.id)
+    completed = load_manifest(entry.id, data_root)
+    if completed is None:
+        raise RuntimeError(f"Complete manifest disappeared for {entry.id}")
+    if not settings.keep_source_files and DataPaths(data_root).raw_source(entry.id).exists():
+        _delete_converted_sources(entry, completed, data_root)  # left over from an interrupted run
+    return completed
+
+
+def _delete_converted_sources(entry: SourceEntry, manifest: SourceManifest, data_root: Path) -> None:
+    rmtree(DataPaths(data_root).raw_source(entry.id), ignore_errors=True)
+    for file_record in manifest.files:
+        file_record.status = FileStatus.DELETED_AFTER_CONVERSION
+    save_manifest(manifest, data_root)
+
+
+def _start_manifest(entry: SourceEntry, data_root: Path) -> SourceManifest:
+    """The source's manifest, reset for a new attempt; file records are kept so downloads resume."""
+
+    manifest = load_manifest(entry.id, data_root) or SourceManifest(source_id=entry.id)
+    manifest.status = ManifestStatus.DOWNLOADING
+    manifest.version = entry.version
+    manifest.started_at = manifest.started_at or _now()
+    manifest.completed_at = None
+    manifest.error = None
+    save_manifest(manifest, data_root)
+    return manifest
+
+
+def _download(
+    entry: SourceEntry, manifest: SourceManifest, data_root: Path, settings: DataImportSettings
+) -> SourceManifest | None:
+    """Download the source files; returns the blocked or failed manifest if that failed, else ``None``.
+
+    Streamed Hugging Face sources have nothing to download.
+    """
+    if isinstance(entry, HuggingFaceSource) and entry.requires_hf_token and not _has_hf_token():
+        return _blocked(
+            entry,
+            manifest,
+            data_root,
+            reason="auth_required",
+            note=(
+                "HF_TOKEN environment variable not set. "
+                f"Accept the access form at https://huggingface.co/datasets/{entry.hf_repo} "
+                "then re-run with HF_TOKEN exported."
+            ),
+        )
+
+    s_dir = DataPaths(data_root).raw_source(entry.id)
+    try:
+        if isinstance(entry, HttpSource) and not _download_http_files(
+            entry, s_dir, manifest, data_root, settings.download_retries
+        ):
+            failed_urls = [f.url for f in manifest.files if f.status == FileStatus.FAILED]
+            return _failed(entry, manifest, data_root, f"One or more source files failed to download: {failed_urls}")
+        if isinstance(entry, HfDownloadSource):
+            _download_huggingface_files(entry, s_dir, manifest, data_root)
+    except Exception as exc:
+        return _blocked_or_failed(entry, manifest, data_root, exc)
+    return None
+
+
+def _has_hf_token() -> bool:
+    return bool(os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"))
+
+
+def _blocked(
+    entry: SourceEntry,
+    manifest: SourceManifest,
+    data_root: Path,
+    reason: str,
+    note: str,
+) -> SourceManifest:
+    manifest.status = ManifestStatus.BLOCKED
+    manifest.blocked_reason = reason
+    manifest.blocked_note = note
+    manifest.completed_at = _now()
+    save_manifest(manifest, data_root)
+    logger.warning("[%s] blocked: %s", entry.id, reason)
+    return manifest
 
 
 def _download_http_files(
@@ -180,6 +341,20 @@ def _download_http_files(
     return all_ok
 
 
+def _failed(
+    entry: SourceEntry,
+    manifest: SourceManifest,
+    data_root: Path,
+    error: str,
+) -> SourceManifest:
+    manifest.status = ManifestStatus.FAILED
+    manifest.error = error
+    manifest.completed_at = _now()
+    save_manifest(manifest, data_root)
+    logger.error("[%s] failed: %s", entry.id, error)
+    return manifest
+
+
 def _download_huggingface_files(
     entry: HfDownloadSource, s_dir: Path, manifest: SourceManifest, data_root: Path
 ) -> None:
@@ -200,6 +375,14 @@ def _download_huggingface_files(
     save_manifest(manifest, data_root)
 
 
+def _blocked_or_failed(
+    entry: SourceEntry, manifest: SourceManifest, data_root: Path, error: Exception
+) -> SourceManifest:
+    if _is_gated_error(error):
+        return _blocked(entry, manifest, data_root, reason="auth_required", note=str(error))
+    return _failed(entry, manifest, data_root, str(error))
+
+
 def _is_gated_error(error: BaseException | None) -> bool:
     """Whether *error* (or an exception it was raised from) means the Hub denied access to a gated dataset."""
 
@@ -210,102 +393,6 @@ def _is_gated_error(error: BaseException | None) -> bool:
             return True
         error = error.__cause__ or error.__context__
     return False
-
-
-def _has_hf_token() -> bool:
-    return bool(os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"))
-
-
-def _delete_converted_sources(entry: SourceEntry, manifest: SourceManifest, data_root: Path) -> None:
-    rmtree(DataPaths(data_root).raw_source(entry.id), ignore_errors=True)
-    for file_record in manifest.files:
-        file_record.status = FileStatus.DELETED_AFTER_CONVERSION
-    save_manifest(manifest, data_root)
-
-
-def ingest_source(
-    entry: SourceEntry, data_root: Path | None = None, settings: DataImportSettings | None = None
-) -> SourceManifest:
-    """Download and ingest a single catalog source.
-
-    Returns the final :class:`SourceManifest` for the source.
-    """
-    settings = settings or DataImportSettings()
-    data_root = data_root or settings.data_root
-
-    completed = _skip_if_complete(entry, data_root, settings)
-    if completed is not None:
-        return completed
-    manifest = _start_manifest(entry, data_root)
-    stopped = _download(entry, manifest, data_root, settings)
-    if stopped is not None:
-        return stopped
-    try:
-        shards, report = _convert(entry, manifest, data_root)
-    except Exception as exc:
-        return _blocked_or_failed(entry, manifest, data_root, exc)
-    return _finish(entry, manifest, data_root, settings, shards, report)
-
-
-def _skip_if_complete(entry: SourceEntry, data_root: Path, settings: DataImportSettings) -> SourceManifest | None:
-    """The manifest of an already complete source (cleaning up leftover source files), else ``None``."""
-
-    if not is_complete(entry.id, data_root, verify_hashes=settings.verify_existing):
-        return None
-    logger.info("[%s] already complete — skipping", entry.id)
-    completed = load_manifest(entry.id, data_root)
-    if completed is None:
-        raise RuntimeError(f"Complete manifest disappeared for {entry.id}")
-    if not settings.keep_source_files and DataPaths(data_root).raw_source(entry.id).exists():
-        _delete_converted_sources(entry, completed, data_root)  # left over from an interrupted run
-    return completed
-
-
-def _start_manifest(entry: SourceEntry, data_root: Path) -> SourceManifest:
-    """The source's manifest, reset for a new attempt; file records are kept so downloads resume."""
-
-    manifest = load_manifest(entry.id, data_root) or SourceManifest(source_id=entry.id)
-    manifest.status = ManifestStatus.DOWNLOADING
-    manifest.version = entry.version
-    manifest.started_at = manifest.started_at or _now()
-    manifest.completed_at = None
-    manifest.error = None
-    save_manifest(manifest, data_root)
-    return manifest
-
-
-def _download(
-    entry: SourceEntry, manifest: SourceManifest, data_root: Path, settings: DataImportSettings
-) -> SourceManifest | None:
-    """Download the source files; returns the blocked or failed manifest if that failed, else ``None``.
-
-    Streamed Hugging Face sources have nothing to download.
-    """
-    if isinstance(entry, HuggingFaceSource) and entry.requires_hf_token and not _has_hf_token():
-        return _blocked(
-            entry,
-            manifest,
-            data_root,
-            reason="auth_required",
-            note=(
-                "HF_TOKEN environment variable not set. "
-                f"Accept the access form at https://huggingface.co/datasets/{entry.hf_repo} "
-                "then re-run with HF_TOKEN exported."
-            ),
-        )
-
-    s_dir = DataPaths(data_root).raw_source(entry.id)
-    try:
-        if isinstance(entry, HttpSource) and not _download_http_files(
-            entry, s_dir, manifest, data_root, settings.download_retries
-        ):
-            failed_urls = [f.url for f in manifest.files if f.status == FileStatus.FAILED]
-            return _failed(entry, manifest, data_root, f"One or more source files failed to download: {failed_urls}")
-        if isinstance(entry, HfDownloadSource):
-            _download_huggingface_files(entry, s_dir, manifest, data_root)
-    except Exception as exc:
-        return _blocked_or_failed(entry, manifest, data_root, exc)
-    return None
 
 
 def _convert(
@@ -374,47 +461,6 @@ def _finish(
     return manifest
 
 
-def _blocked_or_failed(
-    entry: SourceEntry, manifest: SourceManifest, data_root: Path, error: Exception
-) -> SourceManifest:
-    if _is_gated_error(error):
-        return _blocked(entry, manifest, data_root, reason="auth_required", note=str(error))
-    return _failed(entry, manifest, data_root, str(error))
-
-
-def _blocked(
-    entry: SourceEntry,
-    manifest: SourceManifest,
-    data_root: Path,
-    reason: str,
-    note: str,
-) -> SourceManifest:
-    manifest.status = ManifestStatus.BLOCKED
-    manifest.blocked_reason = reason
-    manifest.blocked_note = note
-    manifest.completed_at = _now()
-    save_manifest(manifest, data_root)
-    logger.warning("[%s] blocked: %s", entry.id, reason)
-    return manifest
-
-
-def _failed(
-    entry: SourceEntry,
-    manifest: SourceManifest,
-    data_root: Path,
-    error: str,
-) -> SourceManifest:
-    manifest.status = ManifestStatus.FAILED
-    manifest.error = error
-    manifest.completed_at = _now()
-    save_manifest(manifest, data_root)
-    logger.error("[%s] failed: %s", entry.id, error)
-    return manifest
-
-
-# ─────────────────────────── orchestration ───────────────────────────────────
-
-
 def check_sources(settings: DataImportSettings | None = None) -> list[SourceManifest]:
     """Raise unless every catalog source's manifest is complete or blocked; returns the manifests.
 
@@ -445,61 +491,6 @@ def check_sources(settings: DataImportSettings | None = None) -> list[SourceMani
             "Re-run the download step, or add the ids to DataImportSettings.allow_missing to continue without them."
         )
     return manifests
-
-
-def run(settings: DataImportSettings | None = None) -> list[SourceManifest]:
-    """Run the full catalog-driven downloading pipeline; returns the manifest of every catalog source.
-
-    Raises if a source is not complete or blocked (see :func:`check_sources`).
-    """
-    settings = settings or DataImportSettings()
-    data_root = settings.data_root
-    logger.info("Starting data downloading")
-
-    # Record blocked and excluded sources so manifests are always complete
-    for blocked in BLOCKED:
-        if not is_complete(blocked.id, data_root):
-            _write_blocked_manifest(
-                blocked.id,
-                reason=blocked.reason.value,
-                note=blocked.note,
-                data_root=data_root,
-                version=None,
-            )
-
-    for excluded in EXCLUDED:
-        if not DataPaths(data_root).manifest(excluded.id).exists():
-            _write_excluded_manifest(excluded, data_root)
-
-    # Process active sources
-    results: list[SourceManifest] = []
-    for entry in SOURCES:
-        try:
-            m = ingest_source(entry, data_root, settings)
-        except Exception as exc:
-            logger.exception("[%s] unexpected error: %s", entry.id, exc)
-            m = SourceManifest(source_id=entry.id, status=ManifestStatus.FAILED, error=str(exc))
-            save_manifest(m, data_root)
-        results.append(m)
-
-    # Summary
-    logger.info("─" * 60)
-    logger.info("Downloading summary")
-    logger.info("─" * 60)
-    for m in results:
-        if m.status == ManifestStatus.COMPLETE and m.skipped_files:
-            logger.info("  ! %-30s  documents=%d, skipped files: %s", m.source_id, m.documents, m.skipped_files)
-        elif m.status == ManifestStatus.COMPLETE:
-            logger.info("  ✓ %-30s  documents=%d", m.source_id, m.documents)
-        elif m.status == ManifestStatus.BLOCKED:
-            logger.info("  ⊘ %-30s  blocked: %s", m.source_id, m.blocked_reason)
-        else:
-            logger.info("  ✗ %-30s  %s", m.source_id, m.status)
-    for b in BLOCKED:
-        logger.info("  ⊘ %-30s  blocked: %s", b.id, b.reason.value)
-    logger.info("─" * 60)
-    check_sources(settings)
-    return results
 
 
 if __name__ == "__main__":

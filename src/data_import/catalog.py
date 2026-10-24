@@ -113,8 +113,6 @@ class ExcludedEntry(BaseModel):
     note: str
 
 
-# ─────────────────────────── active sources ──────────────────────────────────
-
 _HPLT3_BASE: Final = "https://data.hplt-project.org/three/sorted/hrv_Latn"
 # Quality bins from highest (10) to lowest (5); one shard per bin for Croatian.
 # Map file: https://data.hplt-project.org/three/sorted/hrv_Latn.map
@@ -253,12 +251,10 @@ SOURCES: Final[list[SourceEntry]] = [
     ),
 ]
 
-# ─────────────────────────── blocked sources ─────────────────────────────────
 # Sources that become temporarily unavailable can be moved here without
 # pretending that a blocked download completed successfully.
 BLOCKED: Final[list[BlockedEntry]] = []
 
-# ─────────────────────────── excluded sources ────────────────────────────────
 
 EXCLUDED: Final[list[ExcludedEntry]] = [
     ExcludedEntry(
