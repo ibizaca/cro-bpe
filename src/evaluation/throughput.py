@@ -45,8 +45,8 @@ logger = getLogger(__name__)
 @dataclass(frozen=True)
 class BenchmarkCandidate:
     name: str
-    kind: Literal["hf", "tiktoken", "tiktoken_builtin"]
     # tokenizer.json for "hf", the model directory for "tiktoken", the encoding name for "tiktoken_builtin"
+    kind: Literal["hf", "tiktoken", "tiktoken_builtin"]
     path: Path | str
     cache_capacity: int | None = None  # rebuild the BPE model with this word cache ("hf", own models only)
 

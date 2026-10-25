@@ -4,11 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cro-bpe"
-version = "0.1.0"
+version = "1.0.0"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
-# Upper bounds stop at the next release allowed to break the API: the next major
-# version, or the next minor version for 0.x packages. pyarrow ships a major per release.
 dependencies = [
     "httpx>=0.28.1,<0.29",
     "huggingface-hub>=1.2.3,<2",
@@ -38,7 +36,6 @@ test = [
 ]
 
 [tool.hatch.build.targets.wheel]
-# The stage packages are top-level imports (``import preprocessing``), as main.py expects.
 packages = [
     "src/data_import",
     "src/evaluation",
@@ -53,14 +50,10 @@ line-length = 120
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-# pycodestyle, pyflakes, isort, pyupgrade, bugbear and flynt (FLY) replace black's
-# companions; ruff format replaces black.
 select = ["E", "F", "W", "I", "UP", "B", "FLY"]
-# zip(strict=...) everywhere and StrEnum would change behaviour for little gain.
 ignore = ["B905", "UP042"]
 
 [tool.ruff.lint.per-file-ignores]
-# MLflow is blocked before the project modules are imported.
 "tests/conftest.py" = ["E402"]
 
 [tool.ruff.lint.isort]
