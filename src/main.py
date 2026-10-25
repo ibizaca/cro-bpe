@@ -10,7 +10,7 @@ from utils.errors import PipelineError
 from utils.fileio import exclusive_run
 from utils.project import WorkflowConfigs, create_data_directories, setup_logging
 
-# CulturaX is gated and access has not been granted, so its import failed; continue without it.
+# CulturaX is gated and access may not been granted, so its import can fail; continue without it.
 download_settings = DataImportSettings(allow_missing=["culturax-hr"])
 
 download_config = WorkflowConfigs.DOWNLOAD(run_step=False, run_function=run_downloading, settings=download_settings)
@@ -40,15 +40,13 @@ def main() -> int:
 
 
 def run_workflow(logger: logging.Logger) -> None:
-    # Create necessary data directories
     logger.info("Creating data directories")
     create_data_directories(download_settings.data_root)
 
-    # Execute flow steps based on configuration; one run at a time per data/ directory
     logger.info("Starting workflow execution")
     with exclusive_run(download_settings.data_root):
         if download_config.run_step:
-            download_config.run()  # raises if a source is neither complete nor blocked
+            download_config.run()
         elif preprocessing_config.run_step:
             # Stop before preprocessing silently drops a source whose download failed.
             check_sources(download_settings)
