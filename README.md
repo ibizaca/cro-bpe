@@ -87,7 +87,7 @@ import tiktoken
 from huggingface_hub import hf_hub_download
 from tiktoken.load import load_tiktoken_bpe
 
-config = json.load(open(hf_hub_download("ibizaca/cro-bpe-32k", "tiktoken.json")))
+config = json.load(open(hf_hub_download("ibizaca/cro-bpe-32k", "config.json")))
 encoding = tiktoken.Encoding(
     name=config["name"],
     pat_str=config["pattern"],
