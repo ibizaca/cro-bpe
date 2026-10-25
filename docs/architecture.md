@@ -183,8 +183,8 @@ exports every model to tiktoken (see [tiktoken export](#tiktoken-export)):
   `<|cls|> … <|sep|>` itself, so the same file serves decoder models.
 
 Output per size in `data/models/cro-bpe-<vocab>/`: `tokenizer.json`,
-`vocab.json`, `merges.txt`, a tiktoken export (`cro-bpe-<vocab>.tiktoken` and
-`tiktoken.json`) and `training_config.json` (settings, corpus summary,
+`vocab.json`, `merges.txt`, a tiktoken export (`cro-bpe-<vocab>.tiktoken`,
+`tiktoken.json` and its copy `config.json`) and `training_config.json` (settings, corpus summary,
 tracking run id, provenance). Training fails if the tiktoken export does not produce the same ids as
 `tokenizer.json` on about 20,000 training documents spread over every training
 shard (so every source is covered, not only the first) plus the whole holdout
@@ -207,6 +207,10 @@ encoding (see the [throughput results](evaluation.md#throughput)). The export is
 - `tiktoken.json`: encoding name, rank file name, the pre-tokenizer regex taken
   from the saved `tokenizer.json` (not the current constant in `tokenizer.py`),
   the special tokens with their ids, and `"normalization": "NFC"`.
+- `config.json`: an exact copy of `tiktoken.json`. The Hub counts downloads by
+  requests to `config.json` (the default for repositories without a registered
+  library), and `transformers` requests it first, so the copy makes those loads
+  count. `tiktoken.json` stays for code that fetches it by name.
 
 Special tokens go only in `special_tokens`, not among the mergeable ranks.
 tiktoken has no normalizer, so `load_tiktoken` returns an `NFCEncoding`, which

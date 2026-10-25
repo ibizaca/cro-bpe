@@ -31,6 +31,10 @@ def test_config_uses_the_models_own_pattern(tiny_model_dir: Path) -> None:
     assert config["special_tokens"] == {token: i for i, token in enumerate(SPECIAL_TOKENS)}
 
 
+def test_hub_config_copies_tiktoken_config(tiny_model_dir: Path) -> None:
+    assert (tiny_model_dir / "config.json").read_bytes() == (tiny_model_dir / "tiktoken.json").read_bytes()
+
+
 def test_ids_match_tokenizer_json(tiny_model_dir: Path, tiny_tokenizer: Tokenizer) -> None:
     encoding = load_tiktoken(tiny_model_dir)
     verify_tiktoken(encoding, tiny_tokenizer, ROUNDTRIP_TEXTS)  # raises on any difference

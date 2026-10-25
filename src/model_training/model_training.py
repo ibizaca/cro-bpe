@@ -7,6 +7,7 @@ Reads ``data/feature_engineered/train`` and writes, for every size in
       tokenizer.json       ← load with model_training.tokenizer.load_tokenizer
       vocab.json, merges.txt
       cro-bpe-<vocab>.tiktoken, tiktoken.json ← load with model_training.export.load_tiktoken
+      config.json          ← copy of tiktoken.json, counted by Hub download stats
       training_config.json ← settings, corpus summary and MLflow run id
 
 BPE training is greedy and does not depend on the target size, so the merges of

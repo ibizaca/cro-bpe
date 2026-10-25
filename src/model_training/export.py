@@ -4,6 +4,7 @@ Writes next to ``tokenizer.json``::
 
     cro-bpe-<vocab>.tiktoken ← base64 token bytes and rank per line
     tiktoken.json            ← pre-tokenizer pattern, special tokens, rank file name
+    config.json              ← copy of tiktoken.json, so Hub download stats count it
 
 Ranks equal the Hugging Face token ids. The trainer assigns ids after the
 special tokens and the 256-byte alphabet in merge order, so id order is merge
@@ -32,6 +33,9 @@ from utils.errors import ExportMismatchError
 logger = getLogger(__name__)
 
 _CONFIG_NAME = "tiktoken.json"
+# The Hub counts a download for every request to config.json, the default query file for repositories
+# without a registered library. tiktoken.json stays for snippets that already fetch it by name.
+_HUB_CONFIG_NAME = "config.json"
 
 
 class NFCEncoding(tiktoken.Encoding):
@@ -71,19 +75,18 @@ def export_tiktoken(model_dir: Path, name: str | None = None) -> Path:
         "".join(f"{base64.b64encode(token).decode()} {rank}\n" for token, rank in sorted(ranks.items(), key=_rank)),
         encoding="utf-8",
     )
-    (model_dir / _CONFIG_NAME).write_text(
-        json.dumps(
-            {
-                "name": name,
-                "rank_file": rank_path.name,
-                "pattern": _split_pattern(tokenizer_config),
-                "special_tokens": special_tokens,
-                "normalization": "NFC",
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
+    config = json.dumps(
+        {
+            "name": name,
+            "rank_file": rank_path.name,
+            "pattern": _split_pattern(tokenizer_config),
+            "special_tokens": special_tokens,
+            "normalization": "NFC",
+        },
+        indent=2,
     )
+    for config_name in (_CONFIG_NAME, _HUB_CONFIG_NAME):
+        (model_dir / config_name).write_text(config, encoding="utf-8")
     return rank_path
 
 
